@@ -18,15 +18,9 @@ contributions:
     - id: microfossil-biogenicity.make_container_widget
       python_name: microfossil_biogenicity:ImageThreshold
       title: Make threshold Container widget
-    - id: microfossil-biogenicity.make_magic_widget
-      python_name: microfossil_biogenicity:threshold_magic_widget
-      title: Make threshold magic widget
-    - id: microfossil-biogenicity.make_function_widget
-      python_name: microfossil_biogenicity:threshold_autogenerate_widget
-      title: Make threshold function widget
-    - id: microfossil-biogenicity.make_qwidget
-      python_name: microfossil_biogenicity:ExampleQWidget
-      title: Make example QWidget
+    - id: microfossil-biogenicity.morphometry_pipeline_widget
+      python_name: microfossil_biogenicity:MorphometryPipelineWidget
+      title: Make Morphometry Pipeline widget
   writers:
     - command: microfossil-biogenicity.write_multiple
       layer_types: ['image*','labels*']
@@ -38,13 +32,17 @@ contributions:
     - command: microfossil-biogenicity.make_sample_data
       display_name: Microfossil Biogenicity
       key: unique_id.1
+    - key: load_hg2_delta
+      display_name: Load HG2 delta scan
+      uri: ..\Barberton CTs\Hoogenoeg\HG2\TIFF_delta_ram-lak_freqscl_1.00
+    - key: load_hg2_beta
+      display_name: Load HG2 beta scan
+      uri: ..\Barberton CTs\Hoogenoeg\HG2\TIFF_beta_ram-lak_freqscl_1.00
+    - key: load_hg1_delta
+      display_name: Load HG1 delta scan
+      uri: ..\Barberton CTs\Hoogenoeg\HG1\TIFF_delta_Ram-Lak_freqscl_1.00
   widgets:
     - command: microfossil-biogenicity.make_container_widget
       display_name: Container Threshold
-    - command: microfossil-biogenicity.make_magic_widget
-      display_name: Magic Threshold
-    - command: microfossil-biogenicity.make_function_widget
-      autogenerate: true
-      display_name: Autogenerate Threshold
-    - command: microfossil-biogenicity.make_qwidget
-      display_name: Example QWidget
+    - command: microfossil-biogenicity.morphometry_pipeline_widget
+      display_name: Extract mophometry features for biogenicity evaluation

@@ -31,36 +31,114 @@ Replace code below according to your needs.
 
 from typing import TYPE_CHECKING
 
-from magicgui import magic_factory
-from magicgui.widgets import CheckBox, Container, create_widget
-from qtpy.QtWidgets import QHBoxLayout, QPushButton, QWidget
+import dask.array as da
+import napari.layers
+import napari.viewer
+from magicgui.widgets import (
+    CheckBox,
+    Container,
+    Label,
+    RangeSlider,
+    create_widget,
+)
+from qtpy.QtCore import QTimer
 from skimage.util import img_as_float
 
 if TYPE_CHECKING:
     import napari
 
 
-# Uses the `autogenerate: true` flag in the plugin manifest
-# to indicate it should be wrapped as a magicgui to autogenerate
-# a widget.
-def threshold_autogenerate_widget(
-    img: "napari.types.ImageData",
-    threshold: "float",
-) -> "napari.types.LabelsData":
-    return img_as_float(img) > threshold
+class CropWidget(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+
+        self._input_image_picker = create_widget(
+            label="Input Data", annotation="napari.layers.Image"
+        )
+        self._crop_around_sample_checkbox = CheckBox(
+            text="Automatically crop around the sample"
+        )
+        self._crop_top_bottom = RangeSlider(
+            min=0, max=1, value=(0, 1), label="Crop top/bottom of the sample"
+        )
+
+        self._debounce_timer = QTimer()
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.timeout.connect(self._crop)
+
+        self._input_changed()
+
+        self._input_image_picker.changed.connect(self._input_changed)
+        self._crop_around_sample_checkbox.changed.connect(self._crop)
+        self._crop_top_bottom.changed.connect(self._start_debounce_timer)
+
+        self.extend(
+            [
+                self._input_image_picker,
+                self._crop_around_sample_checkbox,
+                self._crop_top_bottom,
+            ]
+        )
+
+    def _input_changed(self):
+        image_layer = self._input_image_picker.value
+        if image_layer is None:
+            return
+
+        image_data = image_layer.data
+
+        # Update the crop range based on the image data
+        self._crop_top_bottom.max = image_data.shape[0] - 1
+        self._crop_top_bottom.value = (0, image_data.shape[0] - 1)
+
+        self._rechunked_data = da.rechunk(
+            image_layer.data,
+            chunks=(1, image_data.shape[1], image_data.shape[2]),
+        )
+
+        cropped_layer_name = image_layer.name + "_cropped"
+        if cropped_layer_name not in self._viewer.layers:
+            self._viewer.add_image(
+                self._rechunked_data, name=cropped_layer_name
+            )
+            # TODO hide the original image layer?
+        self._cropped_layer = self._viewer.layers[cropped_layer_name]
+
+    def _start_debounce_timer(self):
+        """Start or restart the debounce timer."""
+        self._debounce_timer.start(300)
+
+    def _crop(self):
+        image_layer = self._input_image_picker.value
+        if image_layer is None:
+            return
+
+        crop_range = self._crop_top_bottom.value
+        # mask = (slice(crop_range[0], crop_range[1]), slice(None), slice(None))
+
+        if self._cropped_layer is not None:
+            self._cropped_layer.data = self._rechunked_data[
+                crop_range[0] : crop_range[1]
+            ]
+            # self._cropped_layer.data = image_layer.data[mask]
 
 
-# the magic_factory decorator lets us customize aspects of our widget
-# we specify a widget type for the threshold parameter
-# and use auto_call=True so the function is called whenever
-# the value of a parameter changes
-@magic_factory(
-    threshold={"widget_type": "FloatSlider", "max": 1}, auto_call=True
-)
-def threshold_magic_widget(
-    img_layer: "napari.layers.Image", threshold: "float"
-) -> "napari.types.LabelsData":
-    return img_as_float(img_layer.data) > threshold
+class MorphometryPipelineWidget(Container):
+    def __init__(self, viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = viewer
+
+        # Caching intermediate steps
+        self._input_image = None
+        self._cropped = None
+        self._filtered = None
+        self._segmented = None
+
+        # Step 1: Crop
+        self.crop_widget = CropWidget(viewer)
+
+        self.extend([Label(label="Step 1:", value="Crop"), self.crop_widget])
 
 
 # if we want even more control over our widget, we can use
@@ -110,20 +188,3 @@ class ImageThreshold(Container):
             self._viewer.layers[name].data = thresholded
         else:
             self._viewer.add_labels(thresholded, name=name)
-
-
-class ExampleQWidget(QWidget):
-    # your QWidget.__init__ can optionally request the napari viewer instance
-    # use a type annotation of 'napari.viewer.Viewer' for any parameter
-    def __init__(self, viewer: "napari.viewer.Viewer"):
-        super().__init__()
-        self.viewer = viewer
-
-        btn = QPushButton("Click me!")
-        btn.clicked.connect(self._on_click)
-
-        self.setLayout(QHBoxLayout())
-        self.layout().addWidget(btn)
-
-    def _on_click(self):
-        print("napari has", len(self.viewer.layers), "layers")
