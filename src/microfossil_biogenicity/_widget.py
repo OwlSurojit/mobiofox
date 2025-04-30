@@ -34,6 +34,7 @@ from typing import TYPE_CHECKING
 import dask.array as da
 import napari.layers
 import napari.viewer
+import numpy as np
 from magicgui.widgets import (
     CheckBox,
     Container,
@@ -41,11 +42,109 @@ from magicgui.widgets import (
     RangeSlider,
     create_widget,
 )
-from qtpy.QtCore import QTimer
+from qtpy.QtCore import QObject, QThread, QTimer, Signal
+from scipy.signal import find_peaks
+from skimage import filters, measure
 from skimage.util import img_as_float
 
 if TYPE_CHECKING:
     import napari
+
+
+# Constants
+DEBOUNCE_TIME_MS = 400
+
+
+class CropWorker(QObject):
+    finished = Signal(tuple)
+    progress = Signal(int)
+
+    def __init__(self, data):
+        super().__init__()
+        self.data = data
+        self.progress_step = 0
+
+    def run(self):
+        projection_z = np.max(self.data, axis=0)
+        projection_y = np.mean(self.data, axis=1)
+        projection_x = np.mean(self.data, axis=2)
+        self.step_progress()
+
+        # Detect xy bounding box through z projection
+        threshold_z = filters.threshold_otsu(projection_z.compute())
+        self.step_progress()
+        label_img = measure.label(projection_z > threshold_z)
+        self.step_progress()
+        regions = measure.regionprops(label_img)
+        largest_region = max(regions, key=lambda r: r.area)
+        bbox = largest_region.bbox
+        self.step_progress()
+
+        # Detect coating artifact line in y projection
+        edges = filters.sobel(projection_y.compute(), axis=0)
+        self.step_progress()
+        vertical_edge_strength = edges.mean(axis=1)
+        normalized_edge_strength = vertical_edge_strength / np.max(
+            np.abs(vertical_edge_strength)
+        )
+        self.step_progress()
+        pos_peaks, pos_peaks_properties = find_peaks(
+            normalized_edge_strength, height=0.01, prominence=0.01
+        )
+        neg_peaks, _ = find_peaks(
+            -normalized_edge_strength, height=0.1, prominence=0.01
+        )
+        sample_top_z = 0
+        if len(pos_peaks) > 1:
+            sample_top_z = pos_peaks_properties["left_bases"][0]
+            coating_artifact_z = pos_peaks_properties["left_bases"][-1]
+        elif len(pos_peaks) == 1:
+            if pos_peaks[0] < self.data.shape[0] / 2:
+                sample_top_z = pos_peaks_properties["left_bases"][0]
+            else:
+                coating_artifact_z = pos_peaks_properties["left_bases"][0]
+        elif len(neg_peaks) > 1:
+            coating_artifact_z = neg_peaks[-1]
+        else:
+            coating_artifact_z = self.data.shape[0]
+        self.step_progress()
+
+        projection_y = np.max(self.data, axis=1).compute()
+        threshold_y = filters.threshold_otsu(projection_y)
+        self.step_progress()
+        label_img = measure.label(projection_y > threshold_y)
+        self.step_progress()
+        regions = measure.regionprops(label_img)
+        largest_region = max(regions, key=lambda r: r.area)
+        bbox_y = largest_region.bbox
+        self.step_progress()
+
+        """profile = projection_y.mean(axis=1)
+        profile_smooth = gaussian_filter1d(profile.compute(), sigma=2)
+        proj_smooth = filters.gaussian(projection_y.compute(), sigma=2)
+        self.step_progress()
+        #gradient = np.gradient(profile_smooth)
+        gradient = np.gradient(proj_smooth, axis=1)
+        self.step_progress()
+        coating_artifact_z = np.argmax(gradient, axis=1)"""
+        print(sample_top_z, coating_artifact_z)
+        self.step_progress()
+
+        self.finished.emit(
+            (
+                projection_z,
+                projection_y,
+                projection_x,
+                label_img,
+                bbox,
+                coating_artifact_z,
+                bbox_y,
+            )
+        )
+
+    def step_progress(self):
+        self.progress_step += 1
+        self.progress.emit(self.progress_step)
 
 
 class CropWidget(Container):
@@ -67,10 +166,10 @@ class CropWidget(Container):
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.timeout.connect(self._crop)
 
-        self._input_changed()
-
         self._input_image_picker.changed.connect(self._input_changed)
-        self._crop_around_sample_checkbox.changed.connect(self._crop)
+        self._crop_around_sample_checkbox.changed.connect(
+            self._autocrop_around_sample
+        )
         self._crop_top_bottom.changed.connect(self._start_debounce_timer)
 
         self.extend(
@@ -79,6 +178,85 @@ class CropWidget(Container):
                 self._crop_around_sample_checkbox,
                 self._crop_top_bottom,
             ]
+        )
+
+        self._input_changed()
+
+    def _start_background_worker(self):
+        image_data = self._input_image_picker.value.data
+        self.thread = QThread()
+        self.worker = CropWorker(image_data)
+        self.worker.moveToThread(self.thread)
+
+        # Connect signals
+        self.thread.started.connect(self.worker.run)
+        self.worker.finished.connect(self._process_background_result)
+        self.worker.finished.connect(self.thread.quit)
+        self.worker.finished.connect(self.worker.deleteLater)
+        self.thread.finished.connect(self.thread.deleteLater)
+
+        self.worker.progress.connect(print)
+
+        # Start thread
+        self.thread.start()
+
+    def _process_background_result(self, result):
+        (
+            self.projection_z,
+            self.projection_y,
+            self.projection_x,
+            label_img,
+            bbox,
+            coating_artifact_z,
+            boox_y,
+        ) = result
+        self._viewer.add_image(self.projection_z, name="projection_z")
+        self._viewer.add_labels(label_img, name="label_img")
+        self._viewer.add_labels(
+            np.array(
+                [
+                    [
+                        (
+                            1
+                            if y > bbox[0]
+                            and y < bbox[2]
+                            and x > bbox[1]
+                            and x < bbox[3]
+                            else 0
+                        )
+                        for x in range(label_img.shape[1])
+                    ]
+                    for y in range(label_img.shape[0])
+                ]
+            ),
+            name="bbox",
+        )
+        self._viewer.add_labels(
+            np.array(
+                [
+                    [
+                        [
+                            (
+                                1
+                                if y > boox_y[0]
+                                and y < boox_y[2]
+                                and x > boox_y[1]
+                                and x < boox_y[3]
+                                else 0
+                            )
+                            for x in range(label_img.shape[1])
+                        ]
+                        for y in range(label_img.shape[0])
+                    ]
+                ]
+            ),
+            name="bbox_y",
+            rotate=(-90, 0, 0),
+        )
+        coating_artifact_label = np.zeros_like(self._rechunked_data)
+        coating_artifact_label[coating_artifact_z] = 1
+        self._viewer.add_labels(
+            coating_artifact_label, name="coating_artifact"
         )
 
     def _input_changed(self):
@@ -91,6 +269,7 @@ class CropWidget(Container):
         # Update the crop range based on the image data
         self._crop_top_bottom.max = image_data.shape[0] - 1
         self._crop_top_bottom.value = (0, image_data.shape[0] - 1)
+        self._crop_around_sample_checkbox.value = False
 
         self._rechunked_data = da.rechunk(
             image_layer.data,
@@ -103,11 +282,25 @@ class CropWidget(Container):
                 self._rechunked_data, name=cropped_layer_name
             )
             # TODO hide the original image layer?
+            image_layer.visible = False
         self._cropped_layer = self._viewer.layers[cropped_layer_name]
+
+        self._start_background_worker()
 
     def _start_debounce_timer(self):
         """Start or restart the debounce timer."""
-        self._debounce_timer.start(300)
+        self._debounce_timer.start(DEBOUNCE_TIME_MS)
+
+    def _autocrop_around_sample(self):
+        image_layer = self._input_image_picker.value
+        if image_layer is None:
+            return
+
+        # self._viewer.add_image(projection_z, name=image_layer.name + "_projection_z")
+        # self._viewer.add_image(projection_y, name=image_layer.name + "_projection_y", rotate=(-90, 0, 0))
+        # self._viewer.add_image(projection_x, name=image_layer.name + "_projection_x", rotate=(0, -90, -90))
+
+        # _, binary = cv2.threshold()
 
     def _crop(self):
         image_layer = self._input_image_picker.value
@@ -115,13 +308,11 @@ class CropWidget(Container):
             return
 
         crop_range = self._crop_top_bottom.value
-        # mask = (slice(crop_range[0], crop_range[1]), slice(None), slice(None))
 
         if self._cropped_layer is not None:
             self._cropped_layer.data = self._rechunked_data[
                 crop_range[0] : crop_range[1]
             ]
-            # self._cropped_layer.data = image_layer.data[mask]
 
 
 class MorphometryPipelineWidget(Container):
