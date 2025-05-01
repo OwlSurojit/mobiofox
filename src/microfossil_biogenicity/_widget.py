@@ -12,13 +12,17 @@ from magicgui.widgets import (
 from skimage.util import img_as_float
 
 # Import local modules
-from ._crop_widget import CropWidget
+from .pipeline_widgets import CropWidget, FilterWidget
 
 
 class MorphometryPipelineWidget(Container):
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self._viewer = viewer
+
+        self._input_image_picker = create_widget(
+            label="Input", annotation="napari.layers.Image"
+        )
 
         # Caching intermediate steps
         self._input_image = None
@@ -27,12 +31,21 @@ class MorphometryPipelineWidget(Container):
         self._segmented = None
 
         # Step 1: Crop
-        self.crop_widget = CropWidget(viewer)
+        self.crop_widget = CropWidget(viewer, self._input_image_picker)
         # Step 2: Filter & remove artifacts
+        self.filter_widget = FilterWidget(viewer, self.crop_widget)
         # Step 3: Segment inclusions
         # Step 4: Extract morphometry features
 
-        self.extend([Label(label="Step 1:", value="Crop"), self.crop_widget])
+        self.extend(
+            [
+                self._input_image_picker,
+                Label(label="Step 1:", value="Crop"),
+                self.crop_widget,
+                Label(label="Step 2:", value="Filter & remove artifacts"),
+                self.filter_widget,
+            ]
+        )
 
 
 # if we want even more control over our widget, we can use

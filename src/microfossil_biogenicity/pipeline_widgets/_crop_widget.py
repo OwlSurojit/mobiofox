@@ -1,16 +1,21 @@
-import napari.layers
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import napari
+
 import napari.viewer
 import numpy as np
 from magicgui.widgets import (
-    Container,
     ProgressBar,
     PushButton,
     RangeSlider,
-    create_widget,
+    Widget,
 )
 from qtpy.QtCore import QObject, QThread, QTimer, Signal
 from scipy.signal import find_peaks
 from skimage import filters, measure
+
+from . import PipelineWidget
 
 # Constants
 DEBOUNCE_TIME_MS = 400
@@ -87,19 +92,27 @@ class CropWorker(QObject):
         )
 
 
-class CropWidget(Container):
+class CropWidget(PipelineWidget):
     """
     Widget to crop a fossil scan to contain only the relevant parts of the sample.
     Offers automatic cropping through segmentation and heuristics, as well as manual cropping through sliders.
+
+    Parameters
+    ----------
+    viewer : napari.viewer.Viewer
+        The napari viewer instance.
+    input_image_widget : magicgui.Widget, optional
+        Picker Widget to choose the input data layer.
+        Should be set if part of a pipeline, otherwise it will be created.
     """
 
-    def __init__(self, viewer: "napari.viewer.Viewer"):
-        super().__init__()
-        self._viewer = viewer
+    def __init__(
+        self,
+        viewer: "napari.viewer.Viewer",
+        input_widget: Widget | None = None,
+    ):
+        super().__init__(viewer, input_widget, "_cropped")
 
-        self._input_image_picker = create_widget(
-            label="Input Data", annotation="napari.layers.Image"
-        )
         self._autocrop_button = PushButton(
             text="Automatically crop around the sample"
         )
@@ -118,7 +131,6 @@ class CropWidget(Container):
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.timeout.connect(self._crop)
 
-        self._input_image_picker.changed.connect(self._input_changed)
         self._autocrop_button.changed.connect(self._autocrop_around_sample)
         self._crop_z.changed.connect(self._start_debounce_timer)
         self._crop_y.changed.connect(self._start_debounce_timer)
@@ -126,7 +138,6 @@ class CropWidget(Container):
 
         self.extend(
             [
-                self._input_image_picker,
                 self._autocrop_button,
                 self._autocrop_progress,
                 self._crop_z,
@@ -139,7 +150,7 @@ class CropWidget(Container):
 
     def _start_background_worker(self):
         self._worker_thread = QThread()
-        self._crop_worker = CropWorker(self._raw_data)
+        self._crop_worker = CropWorker(self.input_data)
         self._crop_worker.moveToThread(self._worker_thread)
 
         # Connect signals
@@ -156,26 +167,16 @@ class CropWidget(Container):
         self._crop_box = result
 
     def _input_changed(self):
-        image_layer = self._input_image_picker.value
-        if image_layer is None:
+        if not super()._input_changed():
             return
-
-        self._raw_data = image_layer.data
-
         # Update the crop ranges based on the image data
-        self._crop_z.max = self._raw_data.shape[0]
-        self._crop_z.value = (0, self._raw_data.shape[0])
-        self._crop_y.max = self._raw_data.shape[1]
-        self._crop_y.value = (0, self._raw_data.shape[1])
-        self._crop_x.max = self._raw_data.shape[2]
-        self._crop_x.value = (0, self._raw_data.shape[2])
+        self._crop_z.max = self.input_data.shape[0]
+        self._crop_z.value = (0, self.input_data.shape[0])
+        self._crop_y.max = self.input_data.shape[1]
+        self._crop_y.value = (0, self.input_data.shape[1])
+        self._crop_x.max = self.input_data.shape[2]
+        self._crop_x.value = (0, self.input_data.shape[2])
 
-        cropped_layer_name = image_layer.name + "_cropped"
-        if cropped_layer_name not in self._viewer.layers:
-            self._viewer.add_image(self._raw_data, name=cropped_layer_name)
-            # TODO hide the original image layer?
-            image_layer.visible = False
-        self._cropped_layer = self._viewer.layers[cropped_layer_name]
         self._crop_box = None
         self._autocrop_progress.value = 0
         self._start_background_worker()
@@ -187,10 +188,6 @@ class CropWidget(Container):
         self._debounce_timer.start(DEBOUNCE_TIME_MS)
 
     def _autocrop_around_sample(self):
-        image_layer = self._input_image_picker.value
-        if image_layer is None:
-            return
-
         self._autocrop_progress.show()
 
         if self._crop_box is None:
@@ -198,7 +195,7 @@ class CropWidget(Container):
             return
 
         lox, hix, loy, hiy, loz, hiz = self._crop_box
-        self._cropped_layer.data = self._raw_data[loz:hiz, loy:hiy, lox:hix]
+        self.output_data = self.input_data[loz:hiz, loy:hiy, lox:hix]
 
         self._step_autocrop_progress()
 
@@ -217,17 +214,12 @@ class CropWidget(Container):
         )
 
     def _crop(self):
-        image_layer = self._input_image_picker.value
-        if image_layer is None:
-            return
-
         crop_range_z = self._crop_z.value
         crop_range_y = self._crop_y.value
         crop_range_x = self._crop_x.value
 
-        if self._cropped_layer is not None:
-            self._cropped_layer.data = self._raw_data[
-                crop_range_z[0] : crop_range_z[1],
-                crop_range_y[0] : crop_range_y[1],
-                crop_range_x[0] : crop_range_x[1],
-            ]
+        self.output_data = self.input_data[
+            crop_range_z[0] : crop_range_z[1],
+            crop_range_y[0] : crop_range_y[1],
+            crop_range_x[0] : crop_range_x[1],
+        ]
