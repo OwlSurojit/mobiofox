@@ -15,7 +15,7 @@ from qtpy.QtCore import QObject, QThread, QTimer, Signal
 from scipy.signal import find_peaks
 from skimage import filters, measure
 
-from . import PipelineWidget
+from ._pipeline_widget import PipelineWidget
 
 # Constants
 DEBOUNCE_TIME_MS = 400
@@ -110,8 +110,9 @@ class CropWidget(PipelineWidget):
         self,
         viewer: "napari.viewer.Viewer",
         input_widget: Widget | None = None,
+        **kwargs,
     ):
-        super().__init__(viewer, input_widget, "_cropped")
+        super().__init__(viewer, input_widget, "_cropped", **kwargs)
 
         self._autocrop_button = PushButton(
             text="Automatically crop around the sample"

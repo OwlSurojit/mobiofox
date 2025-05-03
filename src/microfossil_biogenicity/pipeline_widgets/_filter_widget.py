@@ -5,7 +5,7 @@ if TYPE_CHECKING:
 
 from magicgui.widgets import Widget
 
-from . import PipelineWidget
+from ._pipeline_widget import PipelineWidget
 
 
 class FilterWidget(PipelineWidget):
@@ -17,5 +17,6 @@ class FilterWidget(PipelineWidget):
         self,
         viewer: "napari.viewer.Viewer",
         input_widget: Widget | None = None,
+        **kwargs,
     ):
-        super().__init__(viewer, input_widget, "_filtered")
+        super().__init__(viewer, input_widget, "_filtered", **kwargs)

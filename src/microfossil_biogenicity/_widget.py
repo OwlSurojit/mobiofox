@@ -7,15 +7,23 @@ from magicgui.widgets import (
     CheckBox,
     Container,
     Label,
+    PushButton,
     create_widget,
 )
 from skimage.util import img_as_float
 
-# Import local modules
 from .pipeline_widgets import CropWidget, FilterWidget
 
 
 class MorphometryPipelineWidget(Container):
+
+    STEP_DESCRIPTIONS = [
+        "Crop",
+        "Filter & remove artifacts",
+        "Segment inclusions",
+        "Extract morphometry features",
+    ]
+
     def __init__(self, viewer: "napari.viewer.Viewer"):
         super().__init__()
         self._viewer = viewer
@@ -30,22 +38,55 @@ class MorphometryPipelineWidget(Container):
         self._filtered = None
         self._segmented = None
 
+        self._next_step_button = PushButton(
+            text=f"Start first step ({self.STEP_DESCRIPTIONS[0]})"
+        )
+        self._next_step_button.changed.connect(self._start_next_step)
+        self._current_step = 0
+
         # Step 1: Crop
-        self.crop_widget = CropWidget(viewer, self._input_image_picker)
+        self.crop_widget = CropWidget(
+            viewer, self._input_image_picker, visible=False
+        )
         # Step 2: Filter & remove artifacts
-        self.filter_widget = FilterWidget(viewer, self.crop_widget)
+        self.filter_widget = FilterWidget(
+            viewer, self.crop_widget, visible=False
+        )
         # Step 3: Segment inclusions
         # Step 4: Extract morphometry features
 
         self.extend(
             [
                 self._input_image_picker,
-                Label(label="Step 1:", value="Crop"),
+                self._next_step_button,
+                Label(label="Step 1", value=self.STEP_DESCRIPTIONS[0]),
                 self.crop_widget,
-                Label(label="Step 2:", value="Filter & remove artifacts"),
+                Label(label="Step 2", value=self.STEP_DESCRIPTIONS[1]),
                 self.filter_widget,
+                Label(label="Step 3", value=self.STEP_DESCRIPTIONS[2]),
+                Label(label="Step 4", value=self.STEP_DESCRIPTIONS[3]),
             ]
         )
+
+    def _start_next_step(self):
+        self._current_step += 1
+        if self._current_step == 1:
+            next_step_widget = self.crop_widget
+        elif self._current_step == 2:
+            next_step_widget = self.filter_widget
+        else:
+            return
+
+        # Show new widgets before the button
+        self.remove(self._next_step_button)
+        next_step_widget.show()
+        if self._current_step < len(self.STEP_DESCRIPTIONS):
+            self._next_step_button.text = (
+                f"Next step ({self.STEP_DESCRIPTIONS[self._current_step]})"
+            )
+            self.insert(
+                self.index(next_step_widget) + 1, self._next_step_button
+            )
 
 
 # if we want even more control over our widget, we can use
