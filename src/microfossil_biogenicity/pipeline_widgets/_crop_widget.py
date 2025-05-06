@@ -11,28 +11,19 @@ from magicgui.widgets import (
     RangeSlider,
     Widget,
 )
-from qtpy.QtCore import QObject, QThread, QTimer, Signal
+from qtpy.QtCore import QTimer, Signal
 from scipy.signal import find_peaks
 from skimage import filters, measure
 
-from ._pipeline_widget import PipelineWidget
-
-# Constants
-DEBOUNCE_TIME_MS = 400
+from ._pipeline_widget import PipelineWidget, PipelineWorker
 
 
-class CropWorker(QObject):
+class CropWorker(PipelineWorker):
     """
     Worker thread to calculate the bounding box of the sample through segmentation and heuristics.
     """
 
     finished = Signal(tuple)
-    progress = Signal()
-
-    def __init__(self, data):
-        super().__init__()
-        self.data = data
-        self.progress_step = 0
 
     def run(self):
         projection_z = np.max(self.data, axis=0)
@@ -106,6 +97,8 @@ class CropWidget(PipelineWidget):
         Should be set if part of a pipeline, otherwise it will be created.
     """
 
+    _BACKGROUND_WORKER_TYPE = CropWorker
+
     def __init__(
         self,
         viewer: "napari.viewer.Viewer",
@@ -128,14 +121,15 @@ class CropWidget(PipelineWidget):
         self._crop_y = RangeSlider(min=0, max=1, value=(0, 1), label="Crop y")
         self._crop_x = RangeSlider(min=0, max=1, value=(0, 1), label="Crop x")
 
-        self._debounce_timer = QTimer()
-        self._debounce_timer.setSingleShot(True)
-        self._debounce_timer.timeout.connect(self._crop)
+        # self._debounce_timer = QTimer()
+        # self._debounce_timer.setSingleShot(True)
+        # self._debounce_timer.timeout.connect(self._crop)
+        self._input_changed()
 
         self._autocrop_button.changed.connect(self._autocrop_around_sample)
-        self._crop_z.changed.connect(self._start_debounce_timer)
-        self._crop_y.changed.connect(self._start_debounce_timer)
-        self._crop_x.changed.connect(self._start_debounce_timer)
+        self._crop_z.changed.connect(self._crop)
+        self._crop_y.changed.connect(self._crop)
+        self._crop_x.changed.connect(self._crop)
 
         self.extend(
             [
@@ -146,26 +140,6 @@ class CropWidget(PipelineWidget):
                 self._crop_x,
             ]
         )
-
-        self._input_changed()
-
-    def _start_background_worker(self):
-        self._worker_thread = QThread()
-        self._crop_worker = CropWorker(self.input_data)
-        self._crop_worker.moveToThread(self._worker_thread)
-
-        # Connect signals
-        self._worker_thread.started.connect(self._crop_worker.run)
-        self._crop_worker.finished.connect(self._process_background_result)
-        self._crop_worker.finished.connect(self._worker_thread.quit)
-        self._crop_worker.finished.connect(self._crop_worker.deleteLater)
-        self._worker_thread.finished.connect(self._worker_thread.deleteLater)
-        self._crop_worker.progress.connect(self._step_autocrop_progress)
-
-        self._worker_thread.start()
-
-    def _process_background_result(self, result):
-        self._crop_box = result
 
     def _input_changed(self):
         if not super()._input_changed():
@@ -182,11 +156,28 @@ class CropWidget(PipelineWidget):
         self._autocrop_progress.value = 0
         self._start_background_worker()
 
-    def _start_debounce_timer(self):
-        """Start or restart the debounce timer."""
+    @PipelineWidget.debounce(400)
+    def _crop(self):
         if getattr(self, "_ignore_slider_callback", False):
             return
-        self._debounce_timer.start(DEBOUNCE_TIME_MS)
+        print("Crop started")
+        crop_range_z = self._crop_z.value
+        crop_range_y = self._crop_y.value
+        crop_range_x = self._crop_x.value
+
+        self.output_data = self.input_data[
+            crop_range_z[0] : crop_range_z[1],
+            crop_range_y[0] : crop_range_y[1],
+            crop_range_x[0] : crop_range_x[1],
+        ]
+
+    def _process_background_result(self, result):
+        self._crop_box = result
+
+    def _handle_progress(self):
+        self._autocrop_progress.value = min(
+            self._autocrop_progress.value + 1, self._autocrop_progress.max
+        )
 
     def _autocrop_around_sample(self):
         self._autocrop_progress.show()
@@ -198,9 +189,9 @@ class CropWidget(PipelineWidget):
         lox, hix, loy, hiy, loz, hiz = self._crop_box
         self.output_data = self.input_data[loz:hiz, loy:hiy, lox:hix]
 
-        self._step_autocrop_progress()
+        self._handle_progress()
 
-        # Update sliders
+        # Update sliders (automatically invokes the cropping)
         self._ignore_slider_callback = True
         self._crop_z.value = (loz, hiz)
         self._crop_y.value = (loy, hiy)
@@ -208,19 +199,3 @@ class CropWidget(PipelineWidget):
         self._ignore_slider_callback = False
 
         self._autocrop_progress.hide()
-
-    def _step_autocrop_progress(self):
-        self._autocrop_progress.value = min(
-            self._autocrop_progress.value + 1, self._autocrop_progress.max
-        )
-
-    def _crop(self):
-        crop_range_z = self._crop_z.value
-        crop_range_y = self._crop_y.value
-        crop_range_x = self._crop_x.value
-
-        self.output_data = self.input_data[
-            crop_range_z[0] : crop_range_z[1],
-            crop_range_y[0] : crop_range_y[1],
-            crop_range_x[0] : crop_range_x[1],
-        ]

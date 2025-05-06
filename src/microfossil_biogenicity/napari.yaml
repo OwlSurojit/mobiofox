@@ -33,14 +33,23 @@ contributions:
       display_name: Microfossil Biogenicity
       key: unique_id.1
     - key: hg2_delta
-      display_name: Load HG2 delta scan
+      display_name: HG2 delta scan
       uri: .\Barberton CTs\Hoogenoeg\HG2\TIFF_delta_ram-lak_freqscl_1.00
     - key: hg2_beta
-      display_name: Load HG2 beta scan
+      display_name: HG2 beta scan
       uri: .\Barberton CTs\Hoogenoeg\HG2\TIFF_beta_ram-lak_freqscl_1.00
     - key: hg1_delta
-      display_name: Load HG1 delta scan
+      display_name: HG1 delta scan
       uri: .\Barberton CTs\Hoogenoeg\HG1\TIFF_delta_Ram-Lak_freqscl_1.00
+    - key: kb1_delta
+      display_name: KB1 delta scan
+      uri: .\Barberton CTs\Kromberg\KB1\TIFF_delta_Ram-Lak_freqscl_1.00
+    - key: kb2_delta
+      display_name: KB2 delta scan
+      uri: .\Barberton CTs\Kromberg\KB2\TIFF_delta_ram-lak_freqscl_1.00
+    - key: kb2_beta
+      display_name: KB2 beta scan
+      uri: .\Barberton CTs\Kromberg\KB2\TIFF_beta_ram-lak_freqscl_1.00
   widgets:
     - command: microfossil-biogenicity.make_container_widget
       display_name: Container Threshold
