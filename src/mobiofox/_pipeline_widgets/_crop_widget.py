@@ -361,7 +361,7 @@ class CropWidget(PipelineWidget):
         shape = self.output_mask[0].shape
         for i in range(sample_height):
             slice_idx = i + top_z - self._crop_z.min
-            fitted_disk = draw.ellipse(
+            ellipse_rr, ellipse_cc = draw.ellipse(
                 fitted_center_x[slice_idx],
                 fitted_center_y[slice_idx],
                 fitted_major_radius[slice_idx] - self._radius_margin.value,
@@ -369,7 +369,7 @@ class CropWidget(PipelineWidget):
                 shape=shape,
                 rotation=fitted_orientation[slice_idx],
             )
-            self.output_mask[i + top_z, *fitted_disk] = True
+            self.output_mask[i + top_z, ellipse_rr, ellipse_cc] = True
             self._handle_progress(85 + 10 * i / sample_height)
 
     def process_background_result(self, result):
