@@ -250,9 +250,6 @@ class MultiSlider:
                 self._parent_widget.pop(self._last_slider_idx - 1)
                 self._last_slider_idx -= 1
 
-    def _get_label(self):
-        return f"{self._count_box_label}\n\n{'\n\n'.join(f'Threshold {i+1}' for i in range(len(self._sliders)))}"
-
     def _emit_slider_changed(self, idx):
         print(f"Slider {idx} changed")
         self.slider_changed.emit()
