@@ -1,42 +1,53 @@
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    import napari
-
+import napari
+from magicgui import magic_factory
 from magicgui.widgets import (
-    CheckBox,
-    Container,
-    Label,
     PushButton,
-    create_widget,
 )
-from skimage.util import img_as_float
+from qtpy.QtWidgets import QGroupBox, QVBoxLayout, QWidget
 
-from .pipeline_widgets import CropWidget, FilterWidget
+from ._pipeline_widgets import (
+    CropWidget,
+    FilterWidget,
+    MorphometryWidget,
+    SegmentWidget,
+)
+from ._utils._histogram import show_histogram
+from ._utils._metadata_widget import LayerPickerWithMetadata
 
 
-class MorphometryPipelineWidget(Container):
+class MorphometryPipelineWidget(QWidget):
 
     STEP_DESCRIPTIONS = [
-        "Crop",
-        "Filter & remove artifacts",
-        "Segment inclusions",
-        "Extract morphometry features",
+        "Cropping",
+        "Filtering",
+        "Segmentation",
+        "Extract morphometric features",
     ]
 
-    def __init__(self, viewer: "napari.viewer.Viewer"):
+    PIPELINE_WIDGET_TYPES = [
+        CropWidget,
+        FilterWidget,
+        SegmentWidget,
+        MorphometryWidget,
+    ]
+
+    def __init__(self, viewer: napari.Viewer):
         super().__init__()
         self._viewer = viewer
 
-        self._input_image_picker = create_widget(
-            label="Input", annotation="napari.layers.Image"
-        )
+        self._input_with_metadata = LayerPickerWithMetadata(viewer)
 
-        # Caching intermediate steps
-        self._input_image = None
-        self._cropped = None
-        self._filtered = None
-        self._segmented = None
+        self._input_image_picker = self._input_with_metadata.layer_picker
+
+        viewer.layers.events.inserted.connect(
+            self._input_image_picker.reset_choices
+        )
+        viewer.layers.events.removed.connect(
+            self._input_image_picker.reset_choices
+        )
+        viewer.layers.events.reordered.connect(
+            self._input_image_picker.reset_choices
+        )
 
         self._next_step_button = PushButton(
             text=f"Start first step ({self.STEP_DESCRIPTIONS[0]})"
@@ -44,95 +55,85 @@ class MorphometryPipelineWidget(Container):
         self._next_step_button.changed.connect(self._start_next_step)
         self._current_step = 0
 
-        # Step 1: Crop
-        self.crop_widget = CropWidget(
-            viewer, self._input_image_picker, visible=False
+        self._skip_button = PushButton(
+            text=f"Skip step ({self.STEP_DESCRIPTIONS[0]})",
         )
-        # Step 2: Filter & remove artifacts
-        self.filter_widget = FilterWidget(
-            viewer, self.crop_widget, visible=False
-        )
-        # Step 3: Segment inclusions
-        # Step 4: Extract morphometry features
+        self._skip_button.changed.connect(self._skip_step)
 
-        self.extend(
-            [
-                self._input_image_picker,
-                self._next_step_button,
-                Label(label="Step 1", value=self.STEP_DESCRIPTIONS[0]),
-                self.crop_widget,
-                Label(label="Step 2", value=self.STEP_DESCRIPTIONS[1]),
-                self.filter_widget,
-                Label(label="Step 3", value=self.STEP_DESCRIPTIONS[2]),
-                Label(label="Step 4", value=self.STEP_DESCRIPTIONS[3]),
-            ]
+        self._cur_widget = self._input_image_picker
+
+        layout = QVBoxLayout()
+        self.setLayout(layout)
+        # layout.addWidget(self._input_image_picker.native)
+        self._insert_groupbox(0, "Input data", self._input_with_metadata)
+        layout.addWidget(self._next_step_button.native)
+        layout.addWidget(self._skip_button.native)
+
+    def _image_layer_choices(self, _widget):
+        return [
+            layer
+            for layer in self._viewer.layers
+            if isinstance(layer, "napari.layers.Image")
+        ]
+
+    def _insert_groupbox(self, idx, title, container):
+        box = QGroupBox(title)
+        layout = QVBoxLayout()
+        layout.addWidget(container.native)
+        box.setLayout(layout)
+        self.layout().insertWidget(idx, box)
+
+    def _update_button_texts(self):
+        self._next_step_button.text = (
+            f"Next step ({self.STEP_DESCRIPTIONS[self._current_step]})"
+        )
+        self._skip_button.text = (
+            f"Skip step ({self.STEP_DESCRIPTIONS[self._current_step]})"
         )
 
     def _start_next_step(self):
+        next_widget_type = self.PIPELINE_WIDGET_TYPES[self._current_step]
+        if next_widget_type is MorphometryWidget:
+            next_step_widget = next_widget_type(
+                self._viewer,
+                self._cur_widget,
+                intensity_input_widget=self._input_image_picker,
+            )
+        else:
+            next_step_widget = next_widget_type(self._viewer, self._cur_widget)
+        self._cur_widget = next_step_widget
+
+        idx = self.layout().indexOf(self._next_step_button.native)
+        self._insert_groupbox(
+            idx,
+            f"Step {self._current_step+1}: {self.STEP_DESCRIPTIONS[self._current_step]}",
+            next_step_widget,
+        )
         self._current_step += 1
-        if self._current_step == 1:
-            next_step_widget = self.crop_widget
-        elif self._current_step == 2:
-            next_step_widget = self.filter_widget
+
+        if self._current_step < len(self.PIPELINE_WIDGET_TYPES):
+            self._update_button_texts()
         else:
-            return
+            # TODO not sure about this
+            self.layout().removeWidget(self._next_step_button.native)
+            self.layout().removeWidget(self._skip_button.native)
 
-        # Show new widgets before the button
-        self.remove(self._next_step_button)
-        next_step_widget.show()
-        if self._current_step < len(self.STEP_DESCRIPTIONS):
-            self._next_step_button.text = (
-                f"Next step ({self.STEP_DESCRIPTIONS[self._current_step]})"
-            )
-            self.insert(
-                self.index(next_step_widget) + 1, self._next_step_button
-            )
-
-
-# if we want even more control over our widget, we can use
-# magicgui `Container`
-class ImageThreshold(Container):
-    def __init__(self, viewer: "napari.viewer.Viewer"):
-        super().__init__()
-        self._viewer = viewer
-        # use create_widget to generate widgets from type annotations
-        self._image_layer_combo = create_widget(
-            label="Image", annotation="napari.layers.Image"
-        )
-        self._threshold_slider = create_widget(
-            label="Threshold", annotation=float, widget_type="FloatSlider"
-        )
-        self._threshold_slider.min = 0
-        self._threshold_slider.max = 1
-        # use magicgui widgets directly
-        self._invert_checkbox = CheckBox(text="Keep pixels below threshold")
-
-        # connect your own callbacks
-        self._threshold_slider.changed.connect(self._threshold_im)
-        self._invert_checkbox.changed.connect(self._threshold_im)
-
-        # append into/extend the container with your widgets
-        self.extend(
-            [
-                self._image_layer_combo,
-                self._threshold_slider,
-                self._invert_checkbox,
-            ]
-        )
-
-    def _threshold_im(self):
-        image_layer = self._image_layer_combo.value
-        if image_layer is None:
-            return
-
-        image = img_as_float(image_layer.data)
-        name = image_layer.name + "_thresholded"
-        threshold = self._threshold_slider.value
-        if self._invert_checkbox.value:
-            thresholded = image < threshold
+    def _skip_step(self):
+        self._current_step += 1
+        if (
+            self._current_step < len(self.PIPELINE_WIDGET_TYPES) - 1
+        ):  # -1 because MorphometryWidget relies on segmentation
+            self._update_button_texts()
         else:
-            thresholded = image > threshold
-        if name in self._viewer.layers:
-            self._viewer.layers[name].data = thresholded
-        else:
-            self._viewer.add_labels(thresholded, name=name)
+            self.layout().removeWidget(self._next_step_button.native)
+            self.layout().removeWidget(self._skip_button.native)
+
+
+@magic_factory(
+    call_button="Show histogram",
+)
+def histogram_widget(img_layer: "napari.layers.Image") -> None:
+    print("Histogram widget called")
+    show_histogram(
+        img_layer.data[img_layer.data != 0], layer_name=img_layer.name
+    )

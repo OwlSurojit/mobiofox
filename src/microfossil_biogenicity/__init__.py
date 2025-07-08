@@ -2,14 +2,21 @@ try:
     from ._version import version as __version__
 except ImportError:
     __version__ = "unknown"
-from ._sample_data import make_sample_data
-from ._widget import ImageThreshold, MorphometryPipelineWidget
-from ._writer import write_multiple, write_single_image
+from ._pipeline_widgets import (
+    CropWidget,
+    FilterWidget,
+    MorphometryWidget,
+    SegmentWidget,
+)
+from ._utils._metadata_widget import MetadataWidget
+from ._widget import MorphometryPipelineWidget, histogram_widget
 
 __all__ = (
-    "write_single_image",
-    "write_multiple",
-    "make_sample_data",
-    "ImageThreshold",
+    "histogram_widget",
     "MorphometryPipelineWidget",
+    "CropWidget",
+    "FilterWidget",
+    "SegmentWidget",
+    "MorphometryWidget",
+    "MetadataWidget",
 )
