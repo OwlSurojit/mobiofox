@@ -1,5 +1,3 @@
-# from microfossil_biogenicity import make_sample_data
-
 # add your tests here...
 
 

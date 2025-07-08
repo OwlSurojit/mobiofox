@@ -1,0 +1,75 @@
+name: mobiofox
+display_name: MOBIOFOX
+visibility: public
+# see https://napari.org/stable/plugins/technical_references/manifest.html#fields for valid categories
+categories: ["Segmentation", "Measurement", "Image Processing"]
+contributions:
+  commands:
+    - id: mobiofox.edit_metadata
+      python_name: mobiofox:MetadataWidget
+      title: Edit scan metadata
+    - id: mobiofox.morphometry_pipeline_widget
+      python_name: mobiofox:MorphometryPipelineWidget
+      title: Make Morphometry Pipeline widget
+    - id: mobiofox.histogram_widget
+      python_name: mobiofox:histogram_widget
+      title: Make histogram widget
+    - id: mobiofox.crop_widget
+      python_name: mobiofox:CropWidget
+      title: Make crop widget
+    - id: mobiofox.filter_widget
+      python_name: mobiofox:FilterWidget
+      title: Make filter widget
+    - id: mobiofox.segment_widget
+      python_name: mobiofox:SegmentWidget
+      title: Make segment widget
+    - id: mobiofox.morphometry_widget
+      python_name: mobiofox:MorphometryWidget
+      title: Make Morphometry widget
+    - id: mobiofox.read_scan
+      python_name: mobiofox._reader:get_reader
+      title: Read synchrotron scan data
+  sample_data:
+    - key: hg2_delta
+      display_name: HG2 delta scan
+      uri: .\Barberton CTs\Hoogenoeg\HG2\TIFF_delta_ram-lak_freqscl_1.00
+      reader_plugin: mobiofox
+    - key: hg2_beta
+      display_name: HG2 beta scan
+      uri: .\Barberton CTs\Hoogenoeg\HG2\TIFF_beta_ram-lak_freqscl_1.00
+      reader_plugin: mobiofox
+    - key: hg1_delta
+      display_name: HG1 delta scan
+      uri: .\Barberton CTs\Hoogenoeg\HG1\TIFF_delta_Ram-Lak_freqscl_1.00
+      reader_plugin: mobiofox
+    - key: kb1_delta
+      display_name: KB1 delta scan
+      uri: .\Barberton CTs\Kromberg\KB1\TIFF_delta_Ram-Lak_freqscl_1.00
+      reader_plugin: mobiofox
+    - key: kb2_delta
+      display_name: KB2 delta scan
+      uri: .\Barberton CTs\Kromberg\KB2\TIFF_delta_ram-lak_freqscl_1.00
+      reader_plugin: mobiofox
+    - key: kb2_beta
+      display_name: KB2 beta scan
+      uri: .\Barberton CTs\Kromberg\KB2\TIFF_beta_ram-lak_freqscl_1.00
+      reader_plugin: mobiofox
+  widgets:
+    - command: mobiofox.morphometry_pipeline_widget
+      display_name: Full Pipeline
+    - command: mobiofox.crop_widget
+      display_name: 1. Cropping
+    - command: mobiofox.filter_widget
+      display_name: 2. Filtering
+    - command: mobiofox.segment_widget
+      display_name: 3. Segmentation
+    - command: mobiofox.morphometry_widget
+      display_name: 4. Morphometry
+    - command: mobiofox.edit_metadata
+      display_name: Edit Metadata of selected layer
+    - command: mobiofox.histogram_widget
+      display_name: Histogram
+  readers:
+    - command: mobiofox.read_scan
+      filename_patterns: []
+      accepts_directories: true

@@ -1,5 +1,5 @@
 [project]
-name = "microfossil-biogenicity"
+name = "mobiofox"
 dynamic = ["version"]
 description = "Extract morphological data predictive of the biogenicity of potential microfossils from 3D X-ray images of rock samples."
 readme = "README.md"
@@ -42,7 +42,7 @@ testing = [
 ]
 
 [project.entry-points."napari.manifest"]
-microfossil-biogenicity = "microfossil_biogenicity:napari.yaml"
+mobiofox = "mobiofox:napari.yaml"
 
 [project.urls]
 "Bug Tracker" = "https://github.com/OwlSurojit/microfossil-biogenicity/issues"
@@ -65,7 +65,7 @@ where = ["src"]
 
 
 [tool.setuptools_scm]
-write_to = "src/microfossil_biogenicity/_version.py"
+write_to = "src/mobiofox/_version.py"
 fallback_version = "0.0.1+nogit"
 
 
