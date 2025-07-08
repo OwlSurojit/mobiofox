@@ -391,7 +391,11 @@ class MorphometryWidget(PipelineWidget):
             if not sip.isdeleted(cur_table_widget):
                 self._viewer.window.remove_dock_widget(cur_table_widget)
             del cur_table_widget
-        table_name = f"Morphometric Features of {'all labels' if result['label_choice'] == 'All' else f'label {result["label_choice"]}'}"
+        table_name = "Morphometric Features of " + (
+            "all labels"
+            if result["label_choice"] == "All"
+            else f'label {result["label_choice"]}'
+        )
         table = ResultWidget(
             self._viewer,
             result,
