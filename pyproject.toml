@@ -1,7 +1,7 @@
 [project]
 name = "mobiofox"
 dynamic = ["version"]
-description = "Extract morphological data predictive of the biogenicity of potential microfossils from 3D X-ray images of rock samples."
+description = "A napari plugin implementing a pipeline for MOrphometric BIOgenicity analysis of purported microFOssil (P)XCT scans."
 readme = "README.md"
 license = {file = "LICENSE"}
 authors = [
@@ -26,9 +26,14 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = [
     "numpy",
+    "napari",
     "magicgui",
     "qtpy",
     "scikit-image",
+    "scipy",
+    "pandas",
+    "scikit-learn",
+    "sip",
 ]
 
 [project.optional-dependencies]
@@ -45,10 +50,10 @@ testing = [
 mobiofox = "mobiofox:napari.yaml"
 
 [project.urls]
-"Bug Tracker" = "https://github.com/OwlSurojit/microfossil-biogenicity/issues"
-"Documentation" = "https://github.com/OwlSurojit/microfossil-biogenicity#README.md"
-"Source Code" = "https://github.com/OwlSurojit/microfossil-biogenicity"
-"User Support" = "https://github.com/OwlSurojit/microfossil-biogenicity/issues"
+"Bug Tracker" = "https://github.com/OwlSurojit/mobiofox/issues"
+"Documentation" = "https://github.com/OwlSurojit/mobiofox#README.md"
+"Source Code" = "https://github.com/OwlSurojit/mobiofox"
+"User Support" = "https://github.com/OwlSurojit/mobiofox/issues"
 
 [build-system]
 requires = ["setuptools>=42.0.0", "wheel", "setuptools_scm"]
