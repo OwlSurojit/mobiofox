@@ -35,6 +35,7 @@ dependencies = [
     "pandas",
     "scikit-learn",
     "sip",
+    "meshio",
 ]
 
 [project.optional-dependencies]
