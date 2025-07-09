@@ -16,7 +16,7 @@ from scipy.stats import norm
 from skimage import filters, morphology
 from sklearn.cluster import KMeans
 
-from .._utils._histogram import show_histogram
+from .._utils._histogram import calc_histogram, show_histogram
 from .._utils._util_funcs import debounce
 from ._pipeline_widget import PipelineWidget, PipelineWorker
 
@@ -24,10 +24,11 @@ INCLUSION_MIN_SIZE = 50
 
 
 class AutoThresholdWorker(PipelineWorker):
-    def __init__(self, data, mask, seeds=None):
+    def __init__(self, data, mask, seeds=None, thresh_counts=1):
         super().__init__(data, mask)
         self._thresholds = None
         self._seeds = seeds
+        self._thresh_counts = thresh_counts
 
     def _threshold_from_seeds(self):
         seeds_int = self._seeds.astype(np.int32)
@@ -37,17 +38,35 @@ class AutoThresholdWorker(PipelineWorker):
         background_intensity = np.median(self.data[self.mask])
         self._increment_progress(20)
         seed_intensities = np.sort([*seed_intensities, background_intensity])
-        threshs = (seed_intensities[:-1] + seed_intensities[1:]) / 2
-        self._increment_progress(30)
-        print("Manual thresholds from seeds:", threshs)
-        self.finished.emit(threshs)
-
-    def _threshold_isodata(self):
-        thresholds = filters.threshold_isodata(
-            self.data[self.mask], return_all=True
+        print("Seed intensities:", seed_intensities)
+        # threshs = (seed_intensities[:-1] + seed_intensities[1:]) / 2
+        threshs = []
+        hist, bin_edges = calc_histogram(self.data[self.mask])
+        hist = filters.gaussian(hist, sigma=5, preserve_range=True).astype(
+            hist.dtype
         )
-        print("Isodata thresholds:", thresholds)
-        self._increment_progress(50)
+        self._increment_progress(10)
+        for i in range(len(seed_intensities) - 1):
+            lo = bin_edges.searchsorted(seed_intensities[i])
+            hi = bin_edges.searchsorted(seed_intensities[i + 1], side="right")
+            t_idx = np.argmin(hist[lo:hi]) + lo
+            if abs(t_idx - lo) < 5 or abs(t_idx - hi) < 5:
+                t = (seed_intensities[i] + seed_intensities[i + 1]) / 2
+            else:
+                t = bin_edges[t_idx]
+            threshs.append(t)
+            self._increment_progress(20 / (len(seed_intensities) - 1))
+        print("Manual thresholds from seeds:", threshs)
+        self.finished.emit(np.array(threshs))
+
+    def _threshold_multiotsu(self):
+        self._increment_progress(10)
+        thresholds = filters.threshold_multiotsu(
+            hist=calc_histogram(self.data[self.mask]),
+            classes=self._thresh_counts + 1,
+        )
+        print("Multiotsu thresholds:", thresholds)
+        self._increment_progress(40)
         self.finished.emit(thresholds)
 
     def run(self):
@@ -55,7 +74,7 @@ class AutoThresholdWorker(PipelineWorker):
             print("Using seeds for thresholding")
             self._threshold_from_seeds()
         else:
-            self._threshold_isodata()
+            self._threshold_multiotsu()
         # threshold_yen = filters.threshold_yen(self.data[self.mask])
         # print("Yen's threshold:", threshold_yen)
 
@@ -82,7 +101,7 @@ class SegmentWorker(PipelineWorker):
         self._seeds = seeds
 
     def _kmeans(self):
-        INTENSITY_IMPORTANCE = 1000.0
+        INTENSITY_IMPORTANCE = 100.0
         intensity = self.data[self.mask]
         min_intensity = intensity.min()
         max_intensity = intensity.max()
@@ -122,7 +141,7 @@ class SegmentWorker(PipelineWorker):
             )
         else:
             kmeans = KMeans(
-                n_clusters=self._kmeans_num_clusters,
+                n_clusters=self._kmeans_num_clusters + 1,
                 tol=1e-4,
                 max_iter=50,
                 verbose=1,
@@ -132,9 +151,10 @@ class SegmentWorker(PipelineWorker):
         kmeans.fit(features)
         self._increment_progress(30)
         labels = np.zeros_like(self.data, dtype=np.uint8)
-        labels[self.mask] = kmeans.labels_
+        labels_flat = kmeans.labels_
+        self._dominant_label_to_zero(labels_flat)
         self._increment_progress(30)
-        self._dominant_label_to_zero(labels)
+        labels[self.mask] = labels_flat
         self.finished.emit(labels)
 
     def _matrix_removal(self):
@@ -280,6 +300,10 @@ class MultiSlider:
         self._count_selector.visible = self._visible
         for slider in self._sliders:
             slider.visible = self._visible
+
+    @property
+    def count(self):
+        return self._count_selector.value
 
     @property
     def values(self):
@@ -472,6 +496,10 @@ class SegmentWidget(PipelineWidget):
         self._input_widget.value.visible = True
         self._viewer.layers.selection = [self._seeds_layer]
 
+        self._auto_threshold_button.text = (
+            "Determine thresholds based on seeds"
+        )
+
         self._seeds_layer.mode = "add"
         self._seeds_layer.events.data.connect(self._seeds_changed)
         self._viewer.layers.events.removed.connect(self._layer_removed)
@@ -497,6 +525,9 @@ class SegmentWidget(PipelineWidget):
             print("Seeds layer removed")
             self._seeds_layer.events.data.disconnect(self._seeds_changed)
             self._seeds_layer = None
+            self._auto_threshold_button.text = (
+                "Determine thresholds automatically"
+            )
 
     @debounce(300)
     def _manual_threshs_changed(self):
@@ -514,6 +545,7 @@ class SegmentWidget(PipelineWidget):
                 if getattr(self, "_seeds_layer", None) is not None
                 else None
             ),
+            thresh_counts=self._manual_thresholds_widget.count,
         )
 
     def _process_auto_threshs(self, thresholds):

@@ -3,7 +3,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def show_histogram(data: np.ndarray, layer_name: str = ""):
+def calc_histogram(data: np.ndarray):
     if isinstance(data, da.Array):
         data = data.compute()
     if data.ndim > 1:
@@ -15,6 +15,12 @@ def show_histogram(data: np.ndarray, layer_name: str = ""):
     else:
         hist, bin_edges = np.histogram(data, bins=1000)
         bin_edges = bin_edges[:-1]
+
+    return hist, bin_edges
+
+
+def show_histogram(data: np.ndarray, layer_name: str = ""):
+    hist, bin_edges = calc_histogram(data)
 
     fig, ax = plt.subplots()
     ax.plot(bin_edges, hist)
