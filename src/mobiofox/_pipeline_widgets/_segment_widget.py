@@ -35,9 +35,10 @@ class AutoThresholdWorker(PipelineWorker):
         seed_intensities = self.data[
             seeds_int[:, 0], seeds_int[:, 1], seeds_int[:, 2]
         ]
-        background_intensity = np.median(self.data[self.mask])
+        # background_intensity = np.median(self.data[self.mask])
+        # seed_intensities = np.sort([*seed_intensities, background_intensity])
+        seed_intensities.sort()
         self._increment_progress(20)
-        seed_intensities = np.sort([*seed_intensities, background_intensity])
         print("Seed intensities:", seed_intensities)
         # threshs = (seed_intensities[:-1] + seed_intensities[1:]) / 2
         threshs = []
@@ -50,7 +51,7 @@ class AutoThresholdWorker(PipelineWorker):
             lo = bin_edges.searchsorted(seed_intensities[i])
             hi = bin_edges.searchsorted(seed_intensities[i + 1], side="right")
             t_idx = np.argmin(hist[lo:hi]) + lo
-            if abs(t_idx - lo) < 5 or abs(t_idx - hi) < 5:
+            if t_idx == lo or t_idx == hi - 1:
                 t = (seed_intensities[i] + seed_intensities[i + 1]) / 2
             else:
                 t = bin_edges[t_idx]
@@ -79,6 +80,17 @@ class AutoThresholdWorker(PipelineWorker):
         # print("Yen's threshold:", threshold_yen)
 
 
+class MatrixRemovalWorker(PipelineWorker):
+    def __init__(self, data, mask):
+        super().__init__(data, mask)
+
+    def run(self):
+        projection = np.median(self.data, axis=0)
+        mu, std = norm.fit(projection[projection != 0].ravel())
+        print(mu, std)
+        self.finished.emit((mu, std))
+
+
 class SegmentWorker(PipelineWorker):
 
     def __init__(
@@ -87,6 +99,8 @@ class SegmentWorker(PipelineWorker):
         mask,
         segmentation_method,
         thresholds=None,
+        matrix_mu=0,
+        matrix_std=0,
         matrix_removal_num_std=2,
         after_matrix_removal_method=None,
         kmeans_num_clusters=3,
@@ -95,13 +109,15 @@ class SegmentWorker(PipelineWorker):
         super().__init__(data, mask)
         self.segmentation_method = segmentation_method
         self._thresholds = np.sort(thresholds)
+        self._matrix_mu = matrix_mu
+        self._matrix_std = matrix_std
         self._matrix_removal_num_std = matrix_removal_num_std
         self._after_matrix_removal_method = after_matrix_removal_method
         self._kmeans_num_clusters = kmeans_num_clusters
         self._seeds = seeds
 
     def _kmeans(self):
-        INTENSITY_IMPORTANCE = 100.0
+        INTENSITY_IMPORTANCE = 50.0
         intensity = self.data[self.mask]
         min_intensity = intensity.min()
         max_intensity = intensity.max()
@@ -141,7 +157,7 @@ class SegmentWorker(PipelineWorker):
             )
         else:
             kmeans = KMeans(
-                n_clusters=self._kmeans_num_clusters + 1,
+                n_clusters=self._kmeans_num_clusters,
                 tol=1e-4,
                 max_iter=50,
                 verbose=1,
@@ -158,14 +174,16 @@ class SegmentWorker(PipelineWorker):
         self.finished.emit(labels)
 
     def _matrix_removal(self):
-        projection = np.median(self.data, axis=0)
-        self._increment_progress(10)
-        mu, std = norm.fit(projection[projection != 0].ravel())
-        print(mu, std)
-        self._increment_progress(15)
+        if self._matrix_mu == 0 and self._matrix_std == 0:
+            projection = np.median(self.data, axis=0)
+            self._matrix_mu, self._matrix_std = norm.fit(
+                projection[projection != 0].ravel()
+            )
         self.mask = (
-            abs(self.data - mu) > self._matrix_removal_num_std * std
+            abs(self.data - self._matrix_mu)
+            > self._matrix_removal_num_std * self._matrix_std
         ) & self.mask
+        self._increment_progress(15)
         # remove noise
         self.mask = morphology.remove_small_objects(
             self.mask, min_size=INCLUSION_MIN_SIZE
@@ -346,7 +364,7 @@ class SegmentWidget(PipelineWidget):
                 "choices": self._SEGMENTATION_METHODS.keys(),
                 "key": lambda v: self._SEGMENTATION_METHODS[v],
             },
-            value="matrix_removal",
+            value="kmeans",
         )
         self._segmentation_method.changed.connect(
             self._on_segmentation_type_changed
@@ -363,8 +381,12 @@ class SegmentWidget(PipelineWidget):
             label="SDs to remove around matrix mean",
             value=1.5,
             min=0.5,
-            max=3,
+            max=10,
             step=0.001,
+            visible=False,
+        )
+        self._matrix_removal_num_std.changed.connect(
+            self._update_hist_matrix_region
         )
         self._after_matrix_removal = ComboBox(
             label="Method after matrix removal",
@@ -373,6 +395,7 @@ class SegmentWidget(PipelineWidget):
                 "key": lambda v: self._AFTER_MATRIX_REMOVAL_METHODS[v],
             },
             value="kmeans",
+            visible=False,
         )
         self._after_matrix_removal.changed.connect(
             self._on_after_matrix_removal_changed
@@ -444,10 +467,36 @@ class SegmentWidget(PipelineWidget):
     def _show_histogram(self):
         if self.input_data is None:
             return
-        show_histogram(
+        self._hist_fig, self._hist_ax = show_histogram(
             self.input_data[self.input_mask],
             layer_name=self._input_widget.value.name,
         )
+        self._matrix_range_rect = None
+        self._update_hist_matrix_region()
+
+    @debounce(50)
+    def _update_hist_matrix_region(self):
+        if hasattr(self, "_hist_ax") and hasattr(self, "_matrix_mu"):
+            if self._matrix_range_rect is not None:
+                self._matrix_range_rect.set_x(
+                    self._matrix_mu
+                    - self._matrix_removal_num_std.value * self._matrix_std
+                )
+                self._matrix_range_rect.set_width(
+                    2 * self._matrix_removal_num_std.value * self._matrix_std
+                )
+            else:
+                self._matrix_range_rect = self._hist_ax.axvspan(
+                    self._matrix_mu
+                    - self._matrix_removal_num_std.value * self._matrix_std,
+                    self._matrix_mu
+                    + self._matrix_removal_num_std.value * self._matrix_std,
+                    color="red",
+                    alpha=0.5,
+                    label="Matrix removal range",
+                )
+                self._hist_ax.legend()
+            self._hist_fig.canvas.draw_idle()
 
     def _on_segmentation_type_changed(self):
         self._matrix_removal_num_std.hide()
@@ -460,6 +509,10 @@ class SegmentWidget(PipelineWidget):
             self._manual_thresholds_widget.show()
             self._auto_threshold_button.show()
         elif self._segmentation_method.value == "matrix_removal":
+            self.start_background_worker(
+                MatrixRemovalWorker,
+                result_callback=self._process_matrix_removal,
+            )
             self._matrix_removal_num_std.show()
             self._after_matrix_removal.show()
             self._on_after_matrix_removal_changed()
@@ -467,6 +520,13 @@ class SegmentWidget(PipelineWidget):
             self._kmeans_num_clusters.show()
 
         self.interrupt_worker(self._start_segmentation)
+
+    def _process_matrix_removal(self, result):
+        self._matrix_mu, self._matrix_std = result
+        print(
+            "Matrix removal mean:", self._matrix_mu, "std:", self._matrix_std
+        )
+        self._update_hist_matrix_region()
 
     def _on_after_matrix_removal_changed(self):
         self._kmeans_num_clusters.hide()
@@ -558,6 +618,8 @@ class SegmentWidget(PipelineWidget):
             SegmentWorker,
             segmentation_method=self._segmentation_method.value,
             thresholds=self._manual_thresholds_widget.values,
+            matrix_mu=getattr(self, "_matrix_mu", 0),
+            matrix_std=getattr(self, "_matrix_std", 0),
             matrix_removal_num_std=self._matrix_removal_num_std.value,
             after_matrix_removal_method=self._after_matrix_removal.value,
             kmeans_num_clusters=self._kmeans_num_clusters.value,

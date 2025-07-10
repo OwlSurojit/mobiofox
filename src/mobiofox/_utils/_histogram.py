@@ -30,3 +30,5 @@ def show_histogram(data: np.ndarray, layer_name: str = ""):
     ax.set_ylabel("Frequency")
     ax.set_title(f"Histogram of {layer_name}" if layer_name else "Histogram")
     fig.show()
+
+    return fig, ax

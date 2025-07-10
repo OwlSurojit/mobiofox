@@ -692,7 +692,7 @@ class ResultWidget(QWidget):
                 if isinstance(value, float):
                     value_repr = f"{value:8g}"
                 elif isinstance(value, Iterable):
-                    value_repr = f"[{', '.join(f'{v:2g}' for v in value)}]"
+                    value_repr = f"[{', '.join(f'{v:.2f}' for v in value)}]"
                 else:
                     value_repr = str(value)
                 view.setItem(j, i, QTableWidgetItem(value_repr))

@@ -30,7 +30,7 @@ class MorphometryWorker(PipelineWorker):
         self._label_choice = label_choice
         self._metadata = metadata if metadata is not None else {}
 
-    def fit_spheres(self, around_label):
+    def pack_inspheres(self, around_label):
         dt = distance_transform_edt(around_label)
         max_radius = -1
         radii, centers = [], []
@@ -48,24 +48,15 @@ class MorphometryWorker(PipelineWorker):
             zz, yy, xx = np.ogrid[: dt.shape[0], : dt.shape[1], : dt.shape[2]]
             zc, yc, xc = center
             # dt[(zz - zc) ** 2 + (yy - yc) ** 2 + (xx - xc) ** 2 <= radius ** 2] = 0
-            dt = np.min(
+            positive_sphere_dist = np.max(
                 (
-                    dt,
-                    np.max(
-                        (
-                            np.sqrt(
-                                (zz - zc) ** 2
-                                + (yy - yc) ** 2
-                                + (xx - xc) ** 2
-                            )
-                            - radius,
-                            np.zeros_like(dt),
-                        ),
-                        axis=0,
-                    ),
+                    np.sqrt((zz - zc) ** 2 + (yy - yc) ** 2 + (xx - xc) ** 2)
+                    - radius,
+                    np.zeros_like(dt),
                 ),
                 axis=0,
             )
+            dt = np.min((dt, positive_sphere_dist), axis=0)
 
         return radii, centers
 
@@ -98,6 +89,7 @@ class MorphometryWorker(PipelineWorker):
                 "intensity_mean",
                 "intensity_std",
                 "bbox",
+                "equivalent_diameter_area",
             ],
         )
         self._set_progress(50)
@@ -108,8 +100,9 @@ class MorphometryWorker(PipelineWorker):
         props["volume"] = props.pop("area")
         props["surface area"] = [0] * num_labels
         props["solidity"] = [0] * num_labels
+        props["equivalent diameter"] = props.pop("equivalent_diameter_area")
         props["num. of inspheres"] = [0] * num_labels
-        props["sum of insphere diameters"] = [0] * num_labels
+        props["max insphere diameter"] = [0] * num_labels
         props["multiple sphericity"] = [0] * num_labels
         props["insphere fill ratio"] = [0] * num_labels
 
@@ -164,9 +157,9 @@ class MorphometryWorker(PipelineWorker):
             additional_data["upper_bounds"][i] = np.array((hiz, hiy, hix))
 
             # fit included sphere
-            radii, centers = self.fit_spheres(lbl)
+            radii, centers = self.pack_inspheres(lbl)
             props["num. of inspheres"][i] = len(radii)
-            props["sum of insphere diameters"][i] = np.sum(radii) * 2
+            props["max insphere diameter"][i] = np.max(radii) * 2
             props["insphere fill ratio"][i] = (
                 4
                 / 3
@@ -225,13 +218,15 @@ class MorphometryWorker(PipelineWorker):
             unit, pixelsize = extract_unit_and_value(pixelsize)
 
             props["max diameter"] *= pixelsize
-            props["sum of insphere diameters"] *= pixelsize
+            props["equivalent diameter"] *= pixelsize
+            props["max insphere diameter"] *= pixelsize
             props["volume"] *= pixelsize**3
             props["surface area"] *= pixelsize**2
             props.rename(
                 columns={
                     "max diameter": f"max diameter [{unit}]",
-                    "sum of insphere diameters": f"sum of insphere diameters [{unit}]",
+                    "equivalent diameter": f"equivalent diameter [{unit}]",
+                    "max insphere diameter": f"max insphere diameter [{unit}]",
                     "volume": f"volume [{unit}³]",
                     "surface area": f"surface area [{unit}²]",
                 },
@@ -262,7 +257,7 @@ class MorphometryWorker(PipelineWorker):
                 props.insert(
                     3,
                     "mean ED [e⁻/Å³]",
-                    props["mean refractive index"]
+                    props.pop("mean refractive index")
                     * self._metadata["factor_edensity"],
                 )
                 props["min ED [e⁻/Å³]"] = (

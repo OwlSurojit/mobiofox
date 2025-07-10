@@ -9,6 +9,11 @@ PathLike = str
 PathOrPaths = Union[PathLike, Sequence[PathLike]]
 ReaderFunction = Callable[[PathOrPaths], list[LayerData]]
 
+METADATA_SUFFIXES = (
+    "_cutoffs.txt",
+    "_metadata.txt",
+)
+
 
 def get_reader(path: "PathOrPaths") -> Optional["ReaderFunction"]:
     # If we recognize the format, we return the actual reader function
@@ -31,19 +36,22 @@ def get_reader(path: "PathOrPaths") -> Optional["ReaderFunction"]:
 def synchroton_tiff_reader(path: "PathOrPaths") -> list["LayerData"]:
     images = magic_imread(path)
     metadata = {}
-    metadata_path = path + "_cutoffs.txt"
-    if os.path.isfile(metadata_path):
-        with open(metadata_path) as f:
-            cutoffs = f.readlines()
-        for line in cutoffs:
-            line = line.removeprefix("#").replace(" ", "")
-            name_val = line.split("=")
-            if len(name_val) == 2:
-                name, val = name_val
-                try:
-                    metadata[name] = float(val)
-                except ValueError:
-                    continue
+    for md_suffix in METADATA_SUFFIXES:
+        metadata_path = path + md_suffix
+        if os.path.isfile(metadata_path):
+            with open(metadata_path) as f:
+                cutoffs = f.readlines()
+            for line in cutoffs:
+                line = line.removeprefix("#").replace(" ", "")
+                name_val = line.split("=")
+                if len(name_val) == 2:
+                    name, val = name_val
+                    try:
+                        metadata[name] = float(val)
+                    except ValueError:
+                        continue
+            break
+
     parent_dir = os.path.dirname(os.path.abspath(path))
     if parent_dir:
         scan_name = os.path.basename(parent_dir)
