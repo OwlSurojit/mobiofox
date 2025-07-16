@@ -116,7 +116,7 @@ class SegmentWorker(PipelineWorker):
         self._kmeans_num_clusters = kmeans_num_clusters
         self._seeds = seeds
 
-    def _kmeans(self):
+    def _kmeans(self, no_zero_label=False):
         INTENSITY_IMPORTANCE = 50.0
         intensity = self.data[self.mask]
         min_intensity = intensity.min()
@@ -168,10 +168,13 @@ class SegmentWorker(PipelineWorker):
         self._increment_progress(30)
         labels = np.zeros_like(self.data, dtype=np.uint8)
         labels_flat = kmeans.labels_
-        self._dominant_label_to_zero(labels_flat)
+        if no_zero_label:
+            labels_flat += 1
+        else:
+            self._dominant_label_to_zero(labels_flat)
         self._increment_progress(30)
         labels[self.mask] = labels_flat
-        self.finished.emit(labels)
+        return labels
 
     def _matrix_removal(self):
         if self._matrix_mu == 0 and self._matrix_std == 0:
@@ -191,16 +194,14 @@ class SegmentWorker(PipelineWorker):
         self._increment_progress(15)
         # noback = np.zeros_like(self.data)
         if self._after_matrix_removal_method == "kmeans":
-            self._kmeans()
-            return
+            labels = self._kmeans(no_zero_label=True)
         elif self._after_matrix_removal_method == "auto_thresholding":
-            self._threshold()
-            return
+            labels = self._threshold()
         else:
             labels = np.zeros_like(self.data, dtype=np.uint8)
             labels[self.mask] = 1
             self._increment_progress(20)
-            self.finished.emit(labels)
+        return labels
 
     def _dominant_label_to_zero(self, labels):
         l_vals, l_counts = np.unique_counts(labels)
@@ -220,15 +221,16 @@ class SegmentWorker(PipelineWorker):
         labels = np.zeros_like(self.data, dtype=np.uint8)
         labels[self.mask] = labels_flat
         self._increment_progress(20)
-        self.finished.emit(labels)
+        return labels
 
     def run(self):
         if self.segmentation_method == "kmeans":
-            self._kmeans()
+            labels = self._kmeans()
         elif self.segmentation_method == "thresholding":
-            self._threshold()
+            labels = self._threshold()
         elif self.segmentation_method == "matrix_removal":
-            self._matrix_removal()
+            labels = self._matrix_removal()
+        self.finished.emit(labels)
 
 
 class MultiSlider:
@@ -508,7 +510,11 @@ class SegmentWidget(PipelineWidget):
         if self._segmentation_method.value == "thresholding":
             self._manual_thresholds_widget.show()
             self._auto_threshold_button.show()
-        elif self._segmentation_method.value == "matrix_removal":
+            self._start_button.text = "Start segmentation"
+        elif getattr(self, "_seeds_layer", None) is not None:
+            self._start_button.text = "Start segmentation (seeds-based)"
+
+        if self._segmentation_method.value == "matrix_removal":
             self.start_background_worker(
                 MatrixRemovalWorker,
                 result_callback=self._process_matrix_removal,
@@ -560,12 +566,15 @@ class SegmentWidget(PipelineWidget):
             "Determine thresholds based on seeds"
         )
 
+        if self._segmentation_method.value != "thresholding":
+            self._start_button.text = "Start segmentation (seeds-based)"
+
         self._seeds_layer.mode = "add"
         self._seeds_layer.events.data.connect(self._seeds_changed)
         self._viewer.layers.events.removed.connect(self._layer_removed)
 
     def _seeds_changed(self):
-        if not hasattr(self, "_seeds_layer"):
+        if getattr(self, "_seeds_layer", None) is None:
             return
         print("Seeds changed:", self._seeds_layer.data)
 
@@ -588,6 +597,7 @@ class SegmentWidget(PipelineWidget):
             self._auto_threshold_button.text = (
                 "Determine thresholds automatically"
             )
+            self._start_button.text = "Start segmentation"
 
     @debounce(300)
     def _manual_threshs_changed(self):

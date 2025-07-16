@@ -1,3 +1,4 @@
+import re
 from collections.abc import Iterable
 from functools import cached_property, wraps
 
@@ -7,11 +8,14 @@ import meshio
 import napari
 import numpy as np
 import pandas as pd
+import seaborn as sns
 import sip
+import tifffile
 from qtpy.QtCore import QPoint, Qt
 from qtpy.QtWidgets import (
     QAction,
     QComboBox,
+    QDoubleSpinBox,
     QFileDialog,
     QGridLayout,
     QHBoxLayout,
@@ -19,12 +23,12 @@ from qtpy.QtWidgets import (
     QMenu,
     QPushButton,
     QSizePolicy,
-    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QWidget,
     QWidgetAction,
 )
+from scipy import stats
 
 from ._utils._util_funcs import debounce, get_unit_factor
 
@@ -58,14 +62,17 @@ class ResultWidget(QWidget):
 
         self._table = self._raw_table
         self._additional_data = self._raw_additional_data
+        self._unique_intensity_labels = sorted(
+            self._additional_data["intensity_label"].unique()
+        )
 
-        main_view_label = QLabel("Individual object properties<hr>")
+        main_view_label = QLabel("Individual object metrics<hr>")
         main_view_label.setAlignment(Qt.AlignCenter)
         main_view_label.setStyleSheet("font-size: 11pt; padding-top: 20px;")
         self._view = QTableWidget()
         self._view.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
 
-        group_view_label = QLabel("Group properties<hr>")
+        group_view_label = QLabel("Statistical group measures<hr>")
         group_view_label.setAlignment(Qt.AlignCenter)
         group_view_label.setStyleSheet("font-size: 11pt; padding-top: 20px;")
         self._group_view = QTableWidget()
@@ -97,20 +104,28 @@ class ResultWidget(QWidget):
             self._header_context_menu_requested
         )
 
-        filter_label = QLabel("Filter out objects smaller than")
-        self.filter_diameter_picker = QSpinBox()
-        self.filter_diameter_picker.setRange(0, 1000000)
+        filter_label1 = QLabel("Filter out objects with")
+        self.filter_type = QComboBox()
+        self.filter_type.addItems(["max diameter", "volume"])
+        self.filter_type.setCurrentText("max diameter")
+        self.filter_type.setMaximumWidth(100)
+        self.filter_type.currentTextChanged.connect(self._filter_type_changed)
+        filter_label2 = QLabel("smaller than")
+        self.filter_diameter_picker = QDoubleSpinBox()
+        self.filter_diameter_picker.setRange(0, 1e9)
         self.filter_diameter_picker.setValue(0)
+        self.filter_diameter_picker.setSingleStep(0.01)
+        self.filter_diameter_picker.setDecimals(3)
         self.filter_diameter_picker.editingFinished.connect(
-            self.filter_diameter
+            self.filter_diameter_or_volume
         )
-        self.unit_selection = QComboBox()
-        self.unit_selection.setMaximumWidth(70)
-        self.unit_selection.addItems(["pm", "nm", "µm", "mm", "m"])
-        self.unit_selection.setCurrentText("nm")
+        self.filter_unit_selection = QComboBox()
+        self.filter_unit_selection.setMaximumWidth(70)
+        self.filter_unit_selection.addItems(["pm", "nm", "µm", "mm", "m"])
+        self.filter_unit_selection.setCurrentText("nm")
         filter_button = QPushButton("Go")
         filter_button.setMaximumWidth(50)
-        filter_button.clicked.connect(self.filter_diameter)
+        filter_button.clicked.connect(self.filter_diameter_or_volume)
 
         roi_button = QPushButton("Show ROI intensity")
         roi_button.clicked.connect(self._show_roi)
@@ -126,23 +141,25 @@ class ResultWidget(QWidget):
         export_surface_button.clicked.connect(self._export_full_mesh)
 
         copy_button = QPushButton("Copy to clipboard")
-        copy_button.clicked.connect(self._copy_clicked)
+        copy_button.clicked.connect(self._copy_to_clipboard)
         save_button = QPushButton("Save as csv...")
-        save_button.clicked.connect(self._save_clicked)
+        save_button.clicked.connect(self._save_as_csv)
 
         group_copy_button = QPushButton("Copy to clipboard")
-        group_copy_button.clicked.connect(self._group_copy_clicked)
+        group_copy_button.clicked.connect(self._group_copy_to_clipboard)
         group_save_button = QPushButton("Save as csv...")
-        group_save_button.clicked.connect(self._group_save_clicked)
+        group_save_button.clicked.connect(self._group_save_as_csv)
 
         self.setWindowTitle(title)
         self.setLayout(QGridLayout())
 
         filter_volume_widget = QWidget()
         filter_volume_widget.setLayout(QHBoxLayout())
-        filter_volume_widget.layout().addWidget(filter_label)
+        filter_volume_widget.layout().addWidget(filter_label1)
+        filter_volume_widget.layout().addWidget(self.filter_type)
+        filter_volume_widget.layout().addWidget(filter_label2)
         filter_volume_widget.layout().addWidget(self.filter_diameter_picker)
-        filter_volume_widget.layout().addWidget(self.unit_selection)
+        filter_volume_widget.layout().addWidget(self.filter_unit_selection)
         filter_volume_widget.layout().addWidget(filter_button)
         filter_volume_widget.layout().setContentsMargins(0, 0, 0, 0)
         filter_volume_widget.layout().setSpacing(10)
@@ -226,11 +243,31 @@ class ResultWidget(QWidget):
             "Show Mesh", lambda: self._show_one_mesh(row), show_submenu
         )
         self.add_context_menu_action(
+            "Show Orientation",
+            lambda: self._show_one_orientation(row),
+            show_submenu,
+        )
+        self.add_context_menu_action(
             "Show All", lambda: self._show_one_all(row), show_submenu
         )
         self.add_context_menu_action(
             "Export Mesh...",
             lambda: self._export_one_mesh(row),
+            export_submenu,
+        )
+        self.add_context_menu_action(
+            "Export Intensity...",
+            lambda: self._export_one_intensity(row),
+            export_submenu,
+        )
+        self.add_context_menu_action(
+            "Export Object Mask...",
+            lambda: self._export_one_labels(row),
+            export_submenu,
+        )
+        self.add_context_menu_action(
+            "Export Inspheres...",
+            lambda: self._export_one_inspheres(row),
             export_submenu,
         )
 
@@ -271,18 +308,38 @@ class ResultWidget(QWidget):
         boxplot_action.triggered.connect(
             lambda: self._boxplot_column(self._view.currentRow(), column_name)
         )
-        histogram_action = QAction("Histogram", menu)
+        boxenplot_action = QAction("Boxenplot", menu)
+        boxenplot_action.triggered.connect(
+            lambda: self._boxenplot_column(
+                self._view.currentRow(), column_name
+            )
+        )
+
+        histogram_submenu = QMenu("Histogram", menu)
+        histogram_action = QAction("All phases", histogram_submenu)
         histogram_action.triggered.connect(
             lambda: self._histogram_column(
                 self._view.currentRow(), column_name
             )
         )
+        histogram_submenu.addAction(histogram_action)
+        for intensity_label in self._unique_intensity_labels:
+            histogram_action = QAction(
+                f"Phase {intensity_label}", histogram_submenu
+            )
+            histogram_action.triggered.connect(
+                lambda checked=False, il=intensity_label: self._histogram_column(
+                    self._view.currentRow(), column_name, il
+                )
+            )
+            histogram_submenu.addAction(histogram_action)
 
         menu.addAction(title_action)
         menu.addSeparator()
         menu.addMenu(scatter_submenu)
+        menu.addMenu(histogram_submenu)
         menu.addAction(boxplot_action)
-        menu.addAction(histogram_action)
+        menu.addAction(boxenplot_action)
         menu.exec_(header.mapToGlobal(pos))
 
     @debounce(50)
@@ -325,13 +382,33 @@ class ResultWidget(QWidget):
             except IndexError:
                 print(f"Label {lbl} not found in table")
 
-    def filter_diameter(self):
+    def _filter_type_changed(self, text: str):
+        self.filter_unit_selection.clear()
+        if text == "max diameter":
+            self.filter_unit_selection.addItems(["pm", "nm", "µm", "mm", "m"])
+            self.filter_unit_selection.setCurrentText("nm")
+        elif text == "volume":
+            self.filter_unit_selection.addItems(
+                ["pm³", "nm³", "µm³", "mm³", "m³"]
+            )
+            self.filter_unit_selection.setCurrentText("µm³")
+
+    def filter_diameter_or_volume(self):
         val = self.filter_diameter_picker.value()
-        unit = self.unit_selection.currentText()
-        val *= get_unit_factor(unit)
-        index_filter = np.array(
-            [k >= val for k in self._raw_additional_data["feret_diameter_raw"]]
-        )
+        unit = self.filter_unit_selection.currentText()
+        if unit.endswith("³"):
+            val *= get_unit_factor(unit[:-1]) ** 3
+            index_filter = np.array(
+                [k >= val for k in self._raw_additional_data["volume_raw"]]
+            )
+        else:
+            val *= get_unit_factor(unit)
+            index_filter = np.array(
+                [
+                    k >= val
+                    for k in self._raw_additional_data["feret_diameter_raw"]
+                ]
+            )
         self._table = self._raw_table[index_filter]
         self._table.index = pd.RangeIndex(
             start=0, stop=self._table.shape[0], step=1
@@ -470,7 +547,7 @@ class ResultWidget(QWidget):
                 self,
                 "Export surface mesh...",
                 ".",
-                "3D file (*.stl, *.obj, *.ply, *.vtk)",
+                "3D file (*.stl *.obj *.ply *.vtk)",
             )
         if filename:
             meshio.write_points_cells(
@@ -538,35 +615,38 @@ class ResultWidget(QWidget):
             )
         return self._extra_viewer.layers[intensity_name]
 
+    def _get_one_inspheres(self, row):
+        label = self._table["label"][row]
+        z_size, y_size, x_size = (
+            self._additional_data["upper_bounds"][row]
+            - self._additional_data["positions"][row]
+        )
+        inspheres_data = np.zeros((z_size, y_size, x_size), dtype=np.uint32)
+        for radius, center in zip(
+            *self._additional_data["inspheres"][row], strict=False
+        ):
+            zc, yc, xc = center - self._additional_data["positions"][row]
+            zmin, zmax = max(0, int(zc - radius)), min(
+                z_size, int(zc + radius + 1)
+            )
+            ymin, ymax = max(0, int(yc - radius)), min(
+                y_size, int(yc + radius + 1)
+            )
+            xmin, xmax = max(0, int(xc - radius)), min(
+                x_size, int(xc + radius + 1)
+            )
+            z, y, x = np.ogrid[zmin:zmax, ymin:ymax, xmin:xmax]
+            inspheres_data[zmin:zmax, ymin:ymax, xmin:xmax][
+                (z - zc) ** 2 + (y - yc) ** 2 + (x - xc) ** 2 <= radius**2
+            ] = label
+        return inspheres_data
+
     @with_extra_viewer.__func__
     def _show_one_inspheres(self, row):
         label = self._table["label"][row]
         inspheres_name = f"Inspheres of object {label}"
         if inspheres_name not in self._extra_viewer.layers:
-            z_size, y_size, x_size = (
-                self._additional_data["upper_bounds"][row]
-                - self._additional_data["positions"][row]
-            )
-            inspheres_data = np.zeros(
-                (z_size, y_size, x_size), dtype=np.uint32
-            )
-            for radius, center in zip(
-                *self._additional_data["inspheres"][row], strict=False
-            ):
-                zc, yc, xc = center - self._additional_data["positions"][row]
-                zmin, zmax = max(0, int(zc - radius)), min(
-                    z_size, int(zc + radius + 1)
-                )
-                ymin, ymax = max(0, int(yc - radius)), min(
-                    y_size, int(yc + radius + 1)
-                )
-                xmin, xmax = max(0, int(xc - radius)), min(
-                    x_size, int(xc + radius + 1)
-                )
-                z, y, x = np.ogrid[zmin:zmax, ymin:ymax, xmin:xmax]
-                inspheres_data[zmin:zmax, ymin:ymax, xmin:xmax][
-                    (z - zc) ** 2 + (y - yc) ** 2 + (x - xc) ** 2 <= radius**2
-                ] = label
+            inspheres_data = self._get_one_inspheres(row)
             self._extra_viewer.add_labels(inspheres_data, name=inspheres_name)
         return self._extra_viewer.layers[inspheres_name]
 
@@ -583,11 +663,29 @@ class ResultWidget(QWidget):
         return self._extra_viewer.layers[label_name]
 
     @with_extra_viewer.__func__
+    def _show_one_orientation(self, row):
+        label = self._table["label"][row]
+        orientation_name = f"Orientation of object {label}"
+        if orientation_name not in self._extra_viewer.layers:
+            orientation_vector = (
+                np.array(self._table["orientation"][row])
+                * self._additional_data["feret_diameter_pixels"][row]
+            )
+            position = np.array(self._additional_data["local_centroids"][row])
+            self._extra_viewer.add_vectors(
+                [position, orientation_vector],
+                name=orientation_name,
+                edge_width=2.0,
+            )
+        return self._extra_viewer.layers[orientation_name]
+
+    @with_extra_viewer.__func__
     def _show_one_all(self, row):
         layers = [
             self._show_one_intensity.__wrapped__(self, row),
             self._show_one_inspheres.__wrapped__(self, row),
             self._show_one_label.__wrapped__(self, row),
+            self._show_one_orientation.__wrapped__(self, row),
         ]
         mesh_layer = self._show_one_mesh.__wrapped__(self, row)
         mesh_layer.opacity = 0.5
@@ -599,7 +697,7 @@ class ResultWidget(QWidget):
             self,
             "Export surface mesh...",
             ".",
-            "3D file (*.stl, *.obj, *.ply, *.vtk)",
+            "3D file (*.stl *.obj *.ply *.vtk)",
         )
         if filename:
             meshio.write_points_cells(
@@ -619,12 +717,52 @@ class ResultWidget(QWidget):
             self,
             f"Export intensity around object {label}...",
             ".",
-            "Numpy array (*.npy)",
+            "TIFF file (*.tiff *.tif)",
         )
         if filename:
-            np.save(filename, intensity_data)
+            tifffile.imwrite(
+                filename,
+                intensity_data,
+                description=f"Intensity around object {label}",
+            )
 
-    def _save_clicked(self, event=None, filename=None):
+    def _export_one_labels(self, row):
+        label = self._table["label"][row]
+        loz, loy, lox = self._additional_data["positions"][row]
+        hiz, hiy, hix = self._additional_data["upper_bounds"][row]
+        labels_data = (
+            self._labels_layer.data[loz:hiz, loy:hiy, lox:hix] == label
+        )
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            f"Export object mask {label}...",
+            ".",
+            "TIFF file (*.tiff *.tif)",
+        )
+        if filename:
+            tifffile.imwrite(
+                filename,
+                labels_data,
+                description=f"Labels around object {label}",
+            )
+
+    def _export_one_inspheres(self, row):
+        label = self._table["label"][row]
+        filename, _ = QFileDialog.getSaveFileName(
+            self,
+            f"Export inspheres of object {label}...",
+            ".",
+            "TIFF file (*.tiff *.tif)",
+        )
+        if filename:
+            inspheres_data = self._get_one_inspheres(row)
+            tifffile.imwrite(
+                filename,
+                inspheres_data,
+                description=f"Inspheres of object {label}",
+            )
+
+    def _save_as_csv(self, event=None, filename=None):
         if filename is None:
             filename, _ = QFileDialog.getSaveFileName(
                 self, "Save as csv...", ".", "*.csv"
@@ -632,10 +770,10 @@ class ResultWidget(QWidget):
         if filename:
             self._table.to_csv(filename)
 
-    def _copy_clicked(self):
+    def _copy_to_clipboard(self):
         self._table.to_clipboard()
 
-    def _group_save_clicked(self, event=None, filename=None):
+    def _group_save_as_csv(self, event=None, filename=None):
         if filename is None:
             filename, _ = QFileDialog.getSaveFileName(
                 self, "Save as csv...", ".", "*.csv"
@@ -643,7 +781,7 @@ class ResultWidget(QWidget):
         if filename:
             self._group_table.to_csv(filename)
 
-    def _group_copy_clicked(self):
+    def _group_copy_to_clipboard(self):
         self._group_table.to_clipboard()
 
     def calculate_group_props(self):
@@ -652,8 +790,10 @@ class ResultWidget(QWidget):
         ][0]
 
         helper_table = {
-            "intensity_label": self._additional_data["intensity_label"],
+            "phase_label": self._additional_data["intensity_label"],
             diam_col_name: self._table[diam_col_name],
+            "sphericity": self._table["sphericity"],
+            "solidity": self._table["solidity"],
         }
 
         if "mean ED [e⁻/Å³]" in self._table.columns:
@@ -673,13 +813,22 @@ class ResultWidget(QWidget):
         #     helper_table['orientation'] = [np.array(x) for x in self._table['orientation'].tolist()]
 
         helper_table = pd.DataFrame(helper_table)
-        self._group_table = helper_table.groupby("intensity_label").agg(
-            ["mean", "std"]
+        self._group_table = helper_table.groupby("phase_label").agg(
+            ["mean", "std", "min", "max", stats.skew, stats.kurtosis]
         )
+        UNITLESS_COLS = ("skew", "kurtosis")
+        # Rename columns from tuple to string, and remove units for unitless statistical measures
         self._group_table.columns = [
-            " ".join(col[::-1]) if isinstance(col, tuple) else col
+            (
+                f"{col[1]} {re.sub(r'\s*\[.*\]$', '', col[0]) if col[1] in UNITLESS_COLS else col[0]}"
+                if isinstance(col, tuple)
+                else col
+            )
             for col in self._group_table.columns
         ]
+        self._group_table.insert(
+            0, "count", helper_table.groupby("phase_label").size()
+        )
 
     def set_table_content(self, table, view, resize_height=False):
         view.clear()
@@ -726,23 +875,51 @@ class ResultWidget(QWidget):
         fig, ax = plt.subplots()
         helper_table = pd.DataFrame(
             {
-                "intensity_label": self._additional_data["intensity_label"],
+                "phase_label": self._additional_data["intensity_label"],
                 col: self._table[col],
             }
         )
-        helper_table.boxplot(column=col, by="intensity_label", ax=ax)
-        ax.set_title(f"Boxplot of {col} grouped by intensity")
-        ax.set_xlabel("Intensity Label")
+        helper_table.boxplot(column=col, by="phase_label", ax=ax)
+        ax.set_title(f"Boxplot of {col} grouped by material phase")
+        ax.set_xlabel("Phase Label")
         ax.set_ylabel(col)
         fig.suptitle("")
         fig.show()
 
-    def _histogram_column(self, row, col):
-        print(f"Histogram column {col} clicked. Row = {row}")
+    def _boxenplot_column(self, row, col):
+        print(f"Boxenplot column {col} clicked. Row = {row}")
 
         fig, ax = plt.subplots()
-        ax.hist(self._table[col], bins=100)
+        helper_table = pd.DataFrame(
+            {
+                "phase_label": self._additional_data["intensity_label"],
+                col: self._table[col],
+            }
+        )
+        sns.boxenplot(x="phase_label", y=col, data=helper_table, ax=ax)
+        ax.set_title(f"Boxenplot of {col} grouped by material phase")
+        ax.set_xlabel("Phase Label")
+        ax.set_ylabel(col)
+        fig.show()
+
+    def _histogram_column(self, row, col, intensity_label=None):
+        print(f"Histogram column {col} clicked. Row = {row}")
+
+        data = self._table[col]
+        if intensity_label is not None:
+            data = data[
+                self._additional_data["intensity_label"] == intensity_label
+            ]
+
+        bin_width = (
+            2 * stats.iqr(data) / (len(data) ** (1 / 3))
+        )  # Freedman-Diaconis rule
+
+        fig, ax = plt.subplots()
+        sns.histplot(data, binwidth=bin_width, ax=ax)
         ax.set_xlabel(col)
         ax.set_ylabel("Frequency")
-        ax.set_title(f"Histogram of {col}")
+        ax.set_title(
+            f"Histogram of {col}{f' for phase label {intensity_label}' if intensity_label is not None else ''}"
+        )
         fig.show()

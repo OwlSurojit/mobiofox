@@ -105,8 +105,12 @@ class CropWorker(PipelineWorker):
             regions = measure.regionprops(connected[i])
             if len(regions) > 1:
                 disk_region = max(regions, key=lambda r: r.area)
-            else:
+            elif len(regions) == 1:
                 disk_region = regions[0]
+            else:
+                centers.append(centers[-1] if centers else (0, 0))
+                radii.append(radii[-1] if radii else (0, 0))
+                orientations.append(orientations[-1] if orientations else 0)
             centers.append(disk_region.centroid)
             radii.append(
                 (
@@ -275,7 +279,8 @@ class CropWidget(PipelineWidget):
         self._crop_box = None
         self.output_mask = None
         self._frustum_params = None
-        self._compute_crop_params()
+        if not self.interrupt_worker(self._compute_crop_params):
+            self._compute_crop_params()
 
     def _compute_crop_params(self):
         print("Computing crop params")

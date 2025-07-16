@@ -21,7 +21,7 @@ class MorphometryPipelineWidget(QWidget):
         "Cropping",
         "Filtering",
         "Segmentation",
-        "Extract morphometric features",
+        "Morhometry",
     ]
 
     PIPELINE_WIDGET_TYPES = [

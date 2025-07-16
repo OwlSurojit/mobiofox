@@ -9,9 +9,9 @@ authors = [
   {email = "a.s.mueller@student.vu.nl"},
 ]
 classifiers = [
-    "Development Status :: 2 - Pre-Alpha",
+    "Development Status :: 3 - Alpha",
     "Framework :: napari",
-    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
     "License :: OSI Approved :: BSD License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
@@ -36,6 +36,7 @@ dependencies = [
     "scikit-learn",
     "sip",
     "meshio",
+    "seaborn",
 ]
 
 [project.optional-dependencies]

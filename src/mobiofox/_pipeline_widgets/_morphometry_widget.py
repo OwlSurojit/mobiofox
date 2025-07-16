@@ -215,6 +215,7 @@ class MorphometryWorker(PipelineWorker):
             additional_data["feret_diameter_raw"] = (
                 props["max diameter"] * pixelsize
             )
+            additional_data["volume_raw"] = props["volume"] * pixelsize**3
             unit, pixelsize = extract_unit_and_value(pixelsize)
 
             props["max diameter"] *= pixelsize
@@ -322,7 +323,7 @@ class MorphometryWidget(PipelineWidget):
             self._intensity_input_widget = intensity_input_widget
 
         self._select_labels = RadioButtons(
-            label="Choose label for extraction",
+            label="Choose phase label for extraction",
             choices=self._get_label_choice_options(),
             value="All",
         )
