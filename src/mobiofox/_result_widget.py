@@ -820,7 +820,13 @@ class ResultWidget(QWidget):
         # Rename columns from tuple to string, and remove units for unitless statistical measures
         self._group_table.columns = [
             (
-                f"{col[1]} {re.sub(r'\s*\[.*\]$', '', col[0]) if col[1] in UNITLESS_COLS else col[0]}"
+                col[1]
+                + " "
+                + (
+                    re.sub(r"\s*\[.*\]$", "", col[0])
+                    if col[1] in UNITLESS_COLS
+                    else col[0]
+                )
                 if isinstance(col, tuple)
                 else col
             )
