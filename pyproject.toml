@@ -9,7 +9,7 @@ authors = [
   {email = "a.s.mueller@student.vu.nl"},
 ]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 5 - Production/Stable",
     "Framework :: napari",
     "Intended Audience :: Science/Research",
     "License :: OSI Approved :: BSD License",
@@ -74,7 +74,9 @@ where = ["src"]
 
 [tool.setuptools_scm]
 write_to = "src/mobiofox/_version.py"
-fallback_version = "0.0.1+nogit"
+fallback_version = "0.1"
+local_scheme = "no-local-version"
+
 
 
 [tool.black]
