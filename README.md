@@ -1,4 +1,6 @@
 # MOBIOFOX
+
+
 [![License BSD-3](https://img.shields.io/pypi/l/mobiofox.svg?color=green)](https://github.com/OwlSurojit/mobiofox/raw/main/LICENSE)
 [![PyPI](https://img.shields.io/pypi/v/mobiofox.svg?color=green)](https://pypi.org/project/mobiofox)
 [![Python Version](https://img.shields.io/pypi/pyversions/mobiofox.svg?color=green)](https://python.org)
@@ -8,18 +10,29 @@
 [![npe2](https://img.shields.io/badge/plugin-npe2-blue?link=https://napari.org/stable/plugins/index.html)](https://napari.org/stable/plugins/index.html)
 [![Copier](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/copier-org/copier/master/img/badge/badge-grayscale-inverted-border-purple.json)](https://github.com/copier-org/copier)
 
-A napari plugin implementing a pipeline for MOrphometric BIOgenicity analysis of purported microFOssil (P)XCT scans.
-----------------------------------
+### A napari plugin implementing a pipeline for MOrphometric <br/> BIOgenicity analysis of purported microFOssil (P)XCT scans.
+
 
 This [napari] plugin was generated with [copier] using the [napari-plugin-template].
 
-<!--
-Don't miss the full getting started guide to set up your new package:
-https://github.com/napari/napari-plugin-template#getting-started
+## Screenshots
 
-and review the napari docs for plugin developers:
-https://napari.org/stable/plugins/index.html
--->
+### Processing pipeline 
+All processing steps available in the plugin in their default configuration:
+
+<img width="500" alt="Processing pipeline" src="https://github.com/user-attachments/assets/eebb01b7-ec0d-49ca-adc1-10aa4dbe5e7b" />
+
+### Analysis view
+A selection of the results and view on a processed example scan. One detected inclusion is highlighted in pink, while the red arrows indicate the spatial orientation of all inclusions.
+
+<img width="1200" alt="Analysis view" src="https://github.com/user-attachments/assets/c536c525-95c1-4790-af77-9d80ecc0870d" />
+
+### Generating plots
+Example plots generated from within the plugin
+
+<img height="360" alt="KB2_bright_sphericity_volume" src="https://github.com/user-attachments/assets/eaaf39bf-8054-48b0-b225-6df6f33c1f13" />
+<img height="360" alt="KB2_ED_boxen" src="https://github.com/user-attachments/assets/7dd0f07e-ef48-4006-b548-f0f841e2f8c5" />
+
 
 ## Installation
 
@@ -33,6 +46,8 @@ To install latest development version :
 
     pip install git+https://github.com/OwlSurojit/mobiofox.git
 
+
+MOBIOFOX is also available on [napari-hub](https://napari-hub.org/plugins/mobiofox.html) and can be installed from within napari.
 
 ## Contributing
 
